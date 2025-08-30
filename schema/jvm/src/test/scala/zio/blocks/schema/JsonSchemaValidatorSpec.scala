@@ -26,9 +26,9 @@ object JsonSchemaValidatorSpec extends ZIOSpecDefault {
   def spec =
     suite("JsonSchemaValidatorSpec")(
       test("generated schema validates sample instance") {
-        val mapper      = new ObjectMapper()
-        val schemaNode  = mapper.readTree(personSchema.toJsonSchema.toJson)
-        val validator   = JsonSchemaFactory.byDefault().getJsonSchema(schemaNode)
+        val mapper       = new ObjectMapper()
+        val schemaNode   = mapper.readTree(personSchema.toJsonSchema.toJson)
+        val validator    = JsonSchemaFactory.byDefault().getJsonSchema(schemaNode)
         val instanceNode = JsonNodeFactory.instance.objectNode()
         instanceNode.put("name", "Alice")
         instanceNode.put("age", 30)

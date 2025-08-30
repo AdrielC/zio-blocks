@@ -9,7 +9,7 @@ object ReflectJsonSchemaSpec extends ZIOSpecDefault {
 
   sealed trait Animal
   object Animal {
-    final case class Dog(age: Int) extends Animal
+    final case class Dog(age: Int)     extends Animal
     final case class Cat(name: String) extends Animal
   }
 
@@ -102,4 +102,3 @@ object ReflectJsonSchemaSpec extends ZIOSpecDefault {
       }
     )
 }
-
