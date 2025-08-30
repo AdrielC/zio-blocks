@@ -70,7 +70,9 @@ lazy val schema = crossProject(JSPlatform, JVMPlatform, NativePlatform)
     })
   )
   .jvmSettings(
-    libraryDependencies ++= (CrossVersion.partialVersion(scalaVersion.value) match {
+    libraryDependencies ++= Seq(
+      "com.github.java-json-tools" % "json-schema-validator" % "2.2.14" % Test
+    ) ++ (CrossVersion.partialVersion(scalaVersion.value) match {
       case Some((2, _)) =>
         Seq()
       case _ =>
