@@ -1,11 +1,11 @@
 package zio.blocks.schema.json
 
 import zio.blocks.schema.DynamicValue.{Primitive, Record}
-import zio.blocks.schema.json.DynamicValueGen._
+import zio.blocks.schema.DynamicValueGen._
 import zio.blocks.schema.{DynamicValue, PrimitiveValue}
 import zio.test._
 
-object DynamicValueJsonTest extends ZIOSpecDefault {
+object DynamicValueJsonSpec extends ZIOSpecDefault {
   private val simpleRecord = Record(
     List(
       "number"  -> Primitive(value = PrimitiveValue.Int(42)),

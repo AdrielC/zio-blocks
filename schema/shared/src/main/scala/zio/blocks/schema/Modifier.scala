@@ -9,8 +9,6 @@ sealed trait Modifier extends StaticAnnotation
 object Modifier {
   sealed trait Term extends Modifier
 
-  @field case class deferred() extends Term
-
   @field case class transient() extends Term
 
   sealed trait Record extends Modifier
@@ -24,6 +22,8 @@ object Modifier {
   sealed trait Map extends Modifier
 
   sealed trait Primitive extends Modifier
+
+  sealed trait Wrapper extends Modifier
 
   /**
    * A configuration key-value pair, which can be attached to any type of
@@ -39,4 +39,5 @@ object Modifier {
       with Seq
       with Map
       with Primitive
+      with Wrapper
 }

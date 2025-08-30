@@ -1,7 +1,6 @@
 package zio.blocks.schema.binding
 
 import zio.blocks.schema.{Lazy, ReflectTransformer}
-import zio.blocks.schema.binding.Binding
 
 trait HasBinding[F[_, _]] extends ReflectTransformer.OnlyMetadata[F, Binding] {
   override def transformMetadata[T, A](f: F[T, A]): Lazy[Binding[T, A]] = Lazy(binding(f))
@@ -140,4 +139,10 @@ trait HasBinding[F[_, _]] extends ReflectTransformer.OnlyMetadata[F, Binding] {
         case _                                       => sys.error("Expected Binding.Seq")
       }
     )
+
+  final def wrapper[A, B](fa: F[BindingType.Wrapper[A, B], A]): Binding.Wrapper[A, B] =
+    binding(fa) match {
+      case wrapper: Binding.Wrapper[A, B] => wrapper
+      case _                              => sys.error("Expected Binding.Wrapper")
+    }
 }

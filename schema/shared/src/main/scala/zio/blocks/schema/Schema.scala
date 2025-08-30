@@ -1,7 +1,9 @@
 package zio.blocks.schema
 
 import zio.blocks.schema.binding.Binding
+import zio.blocks.schema.derive.{Deriver, DerivationBuilder}
 import java.util.concurrent.ConcurrentHashMap
+import scala.collection.immutable.ArraySeq
 
 /**
  * A `Schema` is a data type that contains reified information on the structure
@@ -9,12 +11,12 @@ import java.util.concurrent.ConcurrentHashMap
  * values of that type.
  */
 final case class Schema[A](reflect: Reflect.Bound[A]) {
-  private[this] val cache: ConcurrentHashMap[codec.Format, _] = new ConcurrentHashMap
+  private[this] val cache: ConcurrentHashMap[codec.Format, ?] = new ConcurrentHashMap
 
   private[this] def getInstance[F <: codec.Format](format: F): format.TypeClass[A] =
     cache
       .asInstanceOf[ConcurrentHashMap[codec.Format, format.TypeClass[A]]]
-      .computeIfAbsent(format, _ => derive(format))
+      .computeIfAbsent(format, _ => derive(format.deriver))
 
   def getDefaultValue: Option[A] = reflect.getDefaultValue
 
@@ -25,11 +27,10 @@ final case class Schema[A](reflect: Reflect.Bound[A]) {
 
   def defaultValue(value: => A): Schema[A] = new Schema(reflect.defaultValue(value))
 
-  def derive[F <: codec.Format](format: F): format.TypeClass[A] = deriving(format).derive
+  def derive[TC[_]](deriver: Deriver[TC]): TC[A] = deriving(deriver).derive
 
-  def deriving[F <: codec.Format](format: F): zio.blocks.schema.derive.DerivationBuilder[format.TypeClass, A] =
-    zio.blocks.schema.derive
-      .DerivationBuilder[format.TypeClass, A](this, format.deriver, IndexedSeq.empty, IndexedSeq.empty)
+  def deriving[TC[_]](deriver: Deriver[TC]): DerivationBuilder[TC, A] =
+    DerivationBuilder[TC, A](this, deriver, IndexedSeq.empty, IndexedSeq.empty)
 
   def decode[F <: codec.Format](format: F)(decodeInput: format.DecodeInput): Either[SchemaError, A] =
     getInstance(format).decode(decodeInput)
@@ -54,11 +55,11 @@ final case class Schema[A](reflect: Reflect.Bound[A]) {
   def examples[B](optic: Optic[A, B], value: B, values: B*): Schema[A] =
     updated(optic)(_.examples(value, values: _*)).getOrElse(this)
 
-  def fromDynamicValue(value: DynamicValue): Either[SchemaError, A] = reflect.fromDynamicValue(value)
+  def fromDynamicValue(value: DynamicValue): Either[SchemaError, A] = reflect.fromDynamicValue(value, Nil)
 
   def get[B](optic: Optic[A, B]): Option[Reflect.Bound[B]] = reflect.get(optic)
 
-  def get(dynamic: DynamicOptic): Option[Reflect.Bound[_]] = reflect.get(dynamic)
+  def get(dynamic: DynamicOptic): Option[Reflect.Bound[?]] = reflect.get(dynamic)
 
   def toDynamicValue(value: A): DynamicValue = reflect.toDynamicValue(value)
 
@@ -67,6 +68,14 @@ final case class Schema[A](reflect: Reflect.Bound[A]) {
 
   def updated[B](optic: Optic[A, B])(f: Reflect.Bound[B] => Reflect.Bound[B]): Option[Schema[A]] =
     reflect.updated(optic)(f).map(Schema(_))
+
+  def @@[Min >: A, Max <: A](aspect: SchemaAspect[Min, Max, Binding]): Schema[A] = new Schema(reflect.aspect(aspect))
+
+  def @@[B](part: Optic[A, B], aspect: SchemaAspect[B, B, Binding]) = new Schema(reflect.aspect(part, aspect))
+
+  def modifier(modifier: reflect.ModifierType): Schema[A] = new Schema(reflect.modifier(modifier))
+
+  def modifiers(modifiers: Iterable[reflect.ModifierType]): Schema[A] = new Schema(reflect.modifiers(modifiers))
 }
 
 object Schema extends SchemaVersionSpecific {
@@ -94,7 +103,7 @@ object Schema extends SchemaVersionSpecific {
 
   implicit val string: Schema[String] = new Schema(Reflect.string[Binding])
 
-  implicit val bigInteger: Schema[BigInt] = new Schema(Reflect.bigInt[Binding])
+  implicit val bigInt: Schema[BigInt] = new Schema(Reflect.bigInt[Binding])
 
   implicit val bigDecimal: Schema[BigDecimal] = new Schema(Reflect.bigDecimal[Binding])
 
@@ -134,13 +143,35 @@ object Schema extends SchemaVersionSpecific {
 
   implicit val uuid: Schema[java.util.UUID] = new Schema(Reflect.uuid[Binding])
 
+  implicit def option[A <: AnyRef](implicit element: Schema[A]): Schema[Option[A]] =
+    new Schema(Reflect.option(element.reflect))
+
+  implicit val optionDouble: Schema[Option[Double]] = new Schema(Reflect.optionDouble(Schema[Double].reflect))
+
+  implicit val optionLong: Schema[Option[Long]] = new Schema(Reflect.optionLong(Schema[Long].reflect))
+
+  implicit val optionFloat: Schema[Option[Float]] = new Schema(Reflect.optionFloat(Schema[Float].reflect))
+
+  implicit val optionInt: Schema[Option[Int]] = new Schema(Reflect.optionInt(Schema[Int].reflect))
+
+  implicit val optionChar: Schema[Option[Char]] = new Schema(Reflect.optionChar(Schema[Char].reflect))
+
+  implicit val optionShort: Schema[Option[Short]] = new Schema(Reflect.optionShort(Schema[Short].reflect))
+
+  implicit val optionBoolean: Schema[Option[Boolean]] = new Schema(Reflect.optionBoolean(Schema[Boolean].reflect))
+
+  implicit val optionByte: Schema[Option[Byte]] = new Schema(Reflect.optionByte(Schema[Byte].reflect))
+
+  implicit val optionUnit: Schema[Option[Unit]] = new Schema(Reflect.optionUnit(Schema[Unit].reflect))
+
   implicit def set[A](implicit element: Schema[A]): Schema[Set[A]] = new Schema(Reflect.set(element.reflect))
 
   implicit def list[A](implicit element: Schema[A]): Schema[List[A]] = new Schema(Reflect.list(element.reflect))
 
   implicit def vector[A](implicit element: Schema[A]): Schema[Vector[A]] = new Schema(Reflect.vector(element.reflect))
 
-  implicit def array[A](implicit element: Schema[A]): Schema[Array[A]] = new Schema(Reflect.array(element.reflect))
+  implicit def arraySeq[A](implicit element: Schema[A]): Schema[ArraySeq[A]] =
+    new Schema(Reflect.arraySeq(element.reflect))
 
   implicit def map[A, B](implicit key: Schema[A], value: Schema[B]): Schema[collection.immutable.Map[A, B]] =
     new Schema(Reflect.map(key.reflect, value.reflect))

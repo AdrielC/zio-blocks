@@ -1,5 +1,6 @@
 package zio.blocks.schema
 
+import scala.collection.immutable.ArraySeq
 import scala.util.control.NoStackTrace
 
 final case class SchemaError(errors: ::[SchemaError.Single]) extends Exception with NoStackTrace {
@@ -11,17 +12,33 @@ final case class SchemaError(errors: ::[SchemaError.Single]) extends Exception w
 }
 
 object SchemaError {
-  def invalidType(source: DynamicOptic, message: String): SchemaError =
-    new SchemaError(new ::(new InvalidType(source, message), Nil))
+  private[schema] def invalidType(trace: List[DynamicOptic.Node], expectation: String): SchemaError =
+    new SchemaError(new ::(new InvalidType(toDynamicOptic(trace), expectation), Nil))
 
-  def missingField(source: DynamicOptic, fieldName: String): SchemaError =
-    new SchemaError(new ::(new MissingField(source, fieldName), Nil))
+  private[schema] def missingField(trace: List[DynamicOptic.Node], fieldName: String): SchemaError =
+    new SchemaError(new ::(new MissingField(toDynamicOptic(trace), fieldName), Nil))
 
-  def duplicatedField(source: DynamicOptic, fieldName: String): SchemaError =
-    new SchemaError(new ::(new DuplicatedField(source, fieldName), Nil))
+  private[schema] def duplicatedField(trace: List[DynamicOptic.Node], fieldName: String): SchemaError =
+    new SchemaError(new ::(new DuplicatedField(toDynamicOptic(trace), fieldName), Nil))
 
-  def unknownCase(source: DynamicOptic, caseName: String): SchemaError =
-    new SchemaError(new ::(new UnknownCase(source, caseName), Nil))
+  private[schema] def unknownCase(trace: List[DynamicOptic.Node], caseName: String): SchemaError =
+    new SchemaError(new ::(new UnknownCase(toDynamicOptic(trace), caseName), Nil))
+
+  private[this] def toDynamicOptic(trace: List[DynamicOptic.Node]): DynamicOptic = {
+    val nodes = trace.toArray
+    if (nodes.length > 1) {
+      var idx1 = 0
+      var idx2 = nodes.length - 1
+      while (idx1 < idx2) {
+        val node = nodes(idx1)
+        nodes(idx1) = nodes(idx2)
+        nodes(idx2) = node
+        idx1 += 1
+        idx2 -= 1
+      }
+    }
+    new DynamicOptic(ArraySeq.unsafeWrapArray(nodes))
+  }
 
   sealed trait Single {
     def message: String
@@ -30,16 +47,18 @@ object SchemaError {
   }
 
   case class MissingField(source: DynamicOptic, fieldName: String) extends Single {
-    override def message: String = s"Missing field $fieldName"
+    override def message: String = s"Missing field $fieldName at: $source"
   }
 
   case class DuplicatedField(source: DynamicOptic, fieldName: String) extends Single {
-    override def message: String = s"Duplicated field $fieldName"
+    override def message: String = s"Duplicated field $fieldName at: $source"
   }
 
-  case class InvalidType(source: DynamicOptic, message: String) extends Single
+  case class InvalidType(source: DynamicOptic, expectation: String) extends Single {
+    override def message: String = s"$expectation at: $source"
+  }
 
   case class UnknownCase(source: DynamicOptic, caseName: String) extends Single {
-    override def message: String = s"Unknown case $caseName"
+    override def message: String = s"Unknown case $caseName at: $source"
   }
 }

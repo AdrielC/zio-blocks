@@ -1,31 +1,28 @@
 package zio.blocks.schema
 
-import zio.Scope
-import zio.blocks.schema.Reflect.Primitive
-import zio.blocks.schema.binding.RegisterOffset.RegisterOffset
+import scala.collection.immutable.ArraySeq
+import zio.blocks.schema.SchemaVersionSpecificSpec.{InnerId, InnerValue}
 import zio.blocks.schema.binding._
 import zio.test.Assertion._
 import zio.test._
 
 object SchemaVersionSpecificSpec extends ZIOSpecDefault {
-  def spec: Spec[TestEnvironment with Scope, Any] = suite("SchemaVersionSpecificSpec")(
+  def spec: Spec[TestEnvironment, Any] = suite("SchemaVersionSpecificSpec")(
     suite("Reflect.Record")(
       test("derives schema using 'derives' keyword") {
+
+        /** Record: Record1 */
         case class Record1(c: Char, d: Double) derives Schema
 
         object Record1 extends CompanionOptics[Record1] {
-          val c = field(x => x.c)
-          val d = field(_.d)
+          val c: Lens[Record1, Char]   = optic(x => x.c)
+          val d: Lens[Record1, Double] = optic(_.d)
         }
 
         val schema = Schema[Record1]
-        val record = schema.reflect.asInstanceOf[Reflect.Record[Binding, Record1]]
-        val field1 = record.fields(0).asInstanceOf[Term.Bound[Record1, Char]]
-        val field2 = record.fields(1).asInstanceOf[Term.Bound[Record1, Double]]
-        assert(field1.value.binding.defaultValue)(isNone) &&
-        assert(field2.value.binding.defaultValue)(isNone) &&
-        assert(record.constructor.usedRegisters)(equalTo(RegisterOffset(chars = 1, doubles = 1))) &&
-        assert(record.deconstructor.usedRegisters)(equalTo(RegisterOffset(chars = 1, doubles = 1))) &&
+        val record = schema.reflect.asRecord
+        assert(record.map(_.constructor.usedRegisters))(isSome(equalTo(RegisterOffset(chars = 1, doubles = 1)))) &&
+        assert(record.map(_.deconstructor.usedRegisters))(isSome(equalTo(RegisterOffset(chars = 1, doubles = 1)))) &&
         assert(Record1.c.get(Record1('1', 2.0)))(equalTo('1')) &&
         assert(Record1.d.get(Record1('1', 2.0)))(equalTo(2.0)) &&
         assert(Record1.c.replace(Record1('1', 2.0), '3'))(equalTo(Record1('3', 2.0))) &&
@@ -33,89 +30,469 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         assert(schema.fromDynamicValue(schema.toDynamicValue(Record1('1', 2.0))))(
           isRight(equalTo(Record1('1', 2.0)))
         ) &&
-        assert(schema)(
+        assert(record.map(_.fields.map(_.name)))(isSome(equalTo(Vector("c", "d")))) &&
+        assert(record.map(_.typeName))(
+          isSome(
+            equalTo(
+              TypeName(
+                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaVersionSpecificSpec", "spec")),
+                name = "Record1"
+              )
+            )
+          )
+        ) &&
+        assert(record.map(_.doc))(isSome(equalTo(Doc("/** Record: Record1 */"))))
+      },
+      test("derives schema recursively for options and supported collections using 'derives' keyword") {
+        case class Foo(
+          as: ArraySeq[Bar],
+          l: List[Bar],
+          m: Map[Bar, Bar],
+          o: Option[Bar],
+          v: Vector[Bar],
+          s: Set[Bar]
+        ) derives Schema
+
+        case class Bar(id: Int)
+
+        val schema = Schema[Foo]
+        val record = schema.reflect.asRecord
+        val value  = Foo(
+          ArraySeq(Bar(1)),
+          List(Bar(2)),
+          Map(Bar(3) -> Bar(4)),
+          Option(Bar(5)),
+          Vector(Bar(6)),
+          Set(Bar(7))
+        )
+        assert(record.map(_.constructor.usedRegisters))(isSome(equalTo(RegisterOffset(objects = 6)))) &&
+        assert(record.map(_.deconstructor.usedRegisters))(isSome(equalTo(RegisterOffset(objects = 6)))) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(value)))(isRight(equalTo(value))) &&
+        assert(record.map(_.fields.map(_.name)))(isSome(equalTo(Vector("as", "l", "m", "o", "v", "s"))))
+      },
+      test("derives schema for tuples") {
+        type Tuple4 = (Byte, Short, Int, Long)
+
+        object Tuple4 extends CompanionOptics[Tuple4] {
+          implicit val schema: Schema[Tuple4] = Schema.derived
+          val _1: Lens[Tuple4, Byte]          = $(_(0))
+          val _2: Lens[Tuple4, Short]         = $(_.apply(1))
+          val _3: Lens[Tuple4, Int]           = $(_._3)
+          val _4: Lens[Tuple4, Long]          = $(_._4)
+        }
+
+        val record = Tuple4.schema.reflect.asRecord
+        val value  = (1: Byte, 2: Short, 3, 4L)
+        assert(record.map(_.constructor.usedRegisters))(
+          isSome(equalTo(RegisterOffset(bytes = 1, shorts = 1, ints = 1, longs = 1)))
+        ) &&
+        assert(Tuple4._1.get(value))(equalTo(1: Byte)) &&
+        assert(Tuple4._2.get(value))(equalTo(2: Short)) &&
+        assert(Tuple4._3.get(value))(equalTo(3)) &&
+        assert(Tuple4._4.get(value))(equalTo(4L)) &&
+        assert(Tuple4._1.replace(value, 5: Byte))(equalTo((5: Byte, 2: Short, 3, 4L))) &&
+        assert(Tuple4._2.replace(value, 5: Short))(equalTo((1: Byte, 5: Short, 3, 4L))) &&
+        assert(Tuple4._3.replace(value, 5))(equalTo((1: Byte, 2: Short, 5, 4L))) &&
+        assert(Tuple4._4.replace(value, 5L))(equalTo((1: Byte, 2: Short, 3, 5L))) &&
+        assert(Tuple4.schema.fromDynamicValue(Tuple4.schema.toDynamicValue(value)))(isRight(equalTo(value))) &&
+        assert(Tuple4.schema)(
           equalTo(
-            new Schema[Record1](
-              reflect = Reflect.Record[Binding, Record1](
-                fields = Seq(
-                  Schema[Char].reflect.asTerm("c"),
-                  Schema[Double].reflect.asTerm("d")
+            new Schema[Tuple4](
+              reflect = Reflect.Record[Binding, Tuple4](
+                fields = Vector(
+                  Schema[Byte].reflect.asTerm("_1"),
+                  Schema[Short].reflect.asTerm("_2"),
+                  Schema[Int].reflect.asTerm("_3"),
+                  Schema[Long].reflect.asTerm("_4")
                 ),
                 typeName = TypeName(
-                  namespace = Namespace(
-                    packages = Seq("zio", "blocks", "schema"),
-                    values = Seq("SchemaVersionSpecificSpec", "spec")
-                  ),
-                  name = "Record1"
+                  namespace = Namespace(packages = Seq("scala")),
+                  name = "Tuple4",
+                  params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
                 ),
                 recordBinding = null
               )
             )
           )
         )
-      }
-    ),
-    suite("Reflect.Variant")(
-      test("derives schema for sealed traits using 'derives' keyword") {
-        sealed trait Variant1 derives Schema
+      },
+      test("derives schema for generic tuples") {
+        type GenericTuple4 = Byte *: Short *: Int *: Long *: EmptyTuple
 
-        case class Case1(d: Double) extends Variant1 derives Schema
-
-        case class Case2(f: Float) extends Variant1 derives Schema
-
-        object Variant1 extends CompanionOptics[Variant1] {
-          val case1 = caseOf[Case1]
-          val case2 = caseOf[Case2]
+        object GenericTuple4 extends CompanionOptics[GenericTuple4] {
+          implicit val schema: Schema[GenericTuple4] = Schema.derived
+          val _1: Lens[GenericTuple4, Byte]          = $(_(0))
+          val _2: Lens[GenericTuple4, Short]         = $(_.apply(1))
+          val _3: Lens[GenericTuple4, Int]           = $(_(2))
+          val _4: Lens[GenericTuple4, Long]          = $(_.apply(3))
         }
 
-        val schema = Schema[Variant1]
-        assert(Variant1.case1.getOption(Case1(0.1)))(isSome(equalTo(Case1(0.1)))) &&
-        assert(Variant1.case2.getOption(Case2(0.2f)))(isSome(equalTo(Case2(0.2f)))) &&
-        assert(Variant1.case1.replace(Case1(0.1), Case1(0.2)))(equalTo(Case1(0.2))) &&
-        assert(Variant1.case2.replace(Case2(0.2f), Case2(0.3f)))(equalTo(Case2(0.3f))) &&
-        assert(schema.fromDynamicValue(schema.toDynamicValue(Case1(0.1))))(isRight(equalTo(Case1(0.1)))) &&
-        assert(schema.fromDynamicValue(schema.toDynamicValue(Case2(0.2f))))(isRight(equalTo(Case2(0.2f)))) &&
-        assert(schema)(
+        val record = GenericTuple4.schema.reflect.asRecord
+        val value  = (1: Byte) *: (2: Short) *: 3 *: 4L *: EmptyTuple
+        assert(record.map(_.constructor.usedRegisters))(
+          isSome(equalTo(RegisterOffset(bytes = 1, shorts = 1, ints = 1, longs = 1)))
+        ) &&
+        assert(GenericTuple4._1.get(value))(equalTo(1: Byte)) &&
+        assert(GenericTuple4._2.get(value))(equalTo(2: Short)) &&
+        assert(GenericTuple4._3.get(value))(equalTo(3)) &&
+        assert(GenericTuple4._4.get(value))(equalTo(4L)) &&
+        assert(GenericTuple4._1.replace(value, 5: Byte))(equalTo((5: Byte) *: (2: Short) *: 3 *: 4L *: EmptyTuple)) &&
+        assert(GenericTuple4._2.replace(value, 5: Short))(equalTo((1: Byte) *: (5: Short) *: 3 *: 4L *: EmptyTuple)) &&
+        assert(GenericTuple4._3.replace(value, 5))(equalTo((1: Byte) *: (2: Short) *: 5 *: 4L *: EmptyTuple)) &&
+        assert(GenericTuple4._4.replace(value, 5L))(equalTo((1: Byte) *: (2: Short) *: 3 *: 5L *: EmptyTuple)) &&
+        assert(GenericTuple4.schema.fromDynamicValue(GenericTuple4.schema.toDynamicValue(value)))(
+          isRight(equalTo(value))
+        ) &&
+        assert(GenericTuple4.schema)(
           equalTo(
-            new Schema[Variant1](
-              reflect = Reflect.Variant[Binding, Variant1](
-                cases = Seq(
-                  Schema[Case1].reflect.asTerm("Case1"),
-                  Schema[Case2].reflect.asTerm("Case2")
+            new Schema[GenericTuple4](
+              reflect = Reflect.Record[Binding, GenericTuple4](
+                fields = Vector(
+                  Schema[Byte].reflect.asTerm("_1"),
+                  Schema[Short].reflect.asTerm("_2"),
+                  Schema[Int].reflect.asTerm("_3"),
+                  Schema[Long].reflect.asTerm("_4")
                 ),
                 typeName = TypeName(
-                  namespace = Namespace(
-                    packages = Seq("zio", "blocks", "schema"),
-                    values = Seq("SchemaVersionSpecificSpec", "spec")
-                  ),
-                  name = "Variant1"
+                  namespace = Namespace(packages = Seq("scala")),
+                  name = "Tuple4",
+                  params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
                 ),
-                variantBinding = null
+                recordBinding = null
               )
             )
           )
         )
       },
+      test("derives schema for complex generic tuples") {
+        val value1 = (1, "VVV")
+        val value2 = ((1, 2L), ("VVV", "WWW"))
+        val value3 = (Some(1), Some("VVV"))
+
+        val schema1: Schema[Tuple.Tail[(Long, Int, String)]]                         = Schema.derived
+        val schema2: Schema[Tuple.Init[(Int, String, Long)]]                         = Schema.derived
+        val schema3: Schema[Tuple.Drop[(Long, Int, String), 1]]                      = Schema.derived
+        val schema4: Schema[Tuple.Take[(Int, String, Long), 2]]                      = Schema.derived
+        val schema5: Schema[Tuple.Concat[Tuple1[Int], Tuple1[String]]]               = Schema.derived
+        val schema6: Schema[Tuple.Append[Tuple1[Int], String]]                       = Schema.derived
+        val schema7: Schema[Tuple.InverseMap[(Option[Int], Option[String]), Option]] = Schema.derived
+        val schema8: Schema[Int *: Tuple1[String]]                                   = Schema.derived
+        val schema9: Schema[Tuple.Zip[(Int, String), (Long, String)]]                = Schema.derived
+        val schema10: Schema[Tuple.Map[(Int, String), Option]]                       = Schema.derived
+        assert(schema1)(
+          equalTo(
+            new Schema[(Int, String)](
+              reflect = Reflect.Record[Binding, (Int, String)](
+                fields = Vector(
+                  Schema[Int].reflect.asTerm("_1"),
+                  Schema[String].reflect.asTerm("_2")
+                ),
+                typeName = TypeName(
+                  namespace = Namespace.scala,
+                  name = "Tuple2",
+                  params = Seq(TypeName.int, TypeName.string)
+                ),
+                recordBinding = null
+              )
+            )
+          )
+        ) &&
+        assert(schema1)(equalTo(schema2)) &&
+        assert(schema1)(equalTo(schema3)) &&
+        assert(schema1)(equalTo(schema4)) &&
+        assert(schema1)(equalTo(schema5)) &&
+        assert(schema1)(equalTo(schema6)) &&
+        assert(schema1)(equalTo(schema7)) &&
+        assert(schema1)(equalTo(schema8)) &&
+        assert(schema9)(
+          equalTo(
+            new Schema[((Int, Long), (String, String))](
+              reflect = Reflect.Record[Binding, ((Int, Long), (String, String))](
+                fields = Vector(
+                  Schema.derived[(Int, Long)].reflect.asTerm("_1"),
+                  Schema.derived[(String, String)].reflect.asTerm("_2")
+                ),
+                typeName = TypeName(
+                  namespace = Namespace.scala,
+                  name = "Tuple2",
+                  params = Seq(
+                    TypeName(Namespace.scala, "Tuple2", Seq(TypeName.int, TypeName.long)),
+                    TypeName(Namespace.scala, "Tuple2", Seq(TypeName.string, TypeName.string))
+                  )
+                ),
+                recordBinding = null
+              )
+            )
+          )
+        ) &&
+        assert(schema10)(
+          equalTo(
+            new Schema[(Int, String)](
+              reflect = Reflect.Record[Binding, (Int, String)](
+                fields = Vector(
+                  Schema[Option[Int]].reflect.asTerm("_1"),
+                  Schema[Option[String]].reflect.asTerm("_2")
+                ),
+                typeName = TypeName(
+                  namespace = Namespace.scala,
+                  name = "Tuple2",
+                  params = Seq(TypeName.option(TypeName.int), TypeName.option(TypeName.string))
+                ),
+                recordBinding = null
+              )
+            )
+          )
+        ) &&
+        assert(schema1.fromDynamicValue(schema1.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
+        assert(schema2.fromDynamicValue(schema2.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
+        assert(schema3.fromDynamicValue(schema3.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
+        assert(schema4.fromDynamicValue(schema4.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
+        assert(schema5.fromDynamicValue(schema5.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
+        assert(schema6.fromDynamicValue(schema6.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
+        assert(schema7.fromDynamicValue(schema7.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
+        assert(schema9.fromDynamicValue(schema9.toDynamicValue(value2)))(isRight(equalTo(value2))) &&
+        assert(schema10.fromDynamicValue(schema10.toDynamicValue(value3)))(isRight(equalTo(value3)))
+      },
+      test("derives schema for case class with opaque subtype fields") {
+        import Id.schema
+
+        val value1 = Opaque(Id.applyUnsafe("VVV"), Value(1))
+        val value2 = Opaque(Id.applyUnsafe("!!!"), Value(1))
+        val schema = Schema[Opaque]
+        assert(schema)(
+          equalTo(
+            new Schema[Opaque](
+              reflect = Reflect.Record[Binding, Opaque](
+                fields = Vector(
+                  Schema[Id].reflect.asTerm("id"),
+                  Schema[Int].reflect.asTerm("value")
+                ),
+                typeName = TypeName(Namespace.zioBlocksSchema, "Opaque"),
+                recordBinding = null
+              )
+            )
+          )
+        ) &&
+        assert(Opaque.id.get(value1))(equalTo(Id.applyUnsafe("VVV"))) &&
+        assert(Opaque.id_wrapped.getOption(value2))(isSome(equalTo("!!!"))) &&
+        assert(Opaque.value.get(value1))(equalTo(Value(1))) &&
+        assert(Opaque.id.replace(value1, Id.applyUnsafe("!!!")))(equalTo(value2)) &&
+        assert(Opaque.id_wrapped.replace(value1, "!!!"))(equalTo(value1)) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(value2)))(
+          isLeft(
+            equalTo(
+              SchemaError(errors =
+                ::(
+                  SchemaError.InvalidType(
+                    source = DynamicOptic(nodes = Vector(DynamicOptic.Node.Field(name = "id"))),
+                    expectation = "Expected Id: Expected a string with letter or digit characters"
+                  ),
+                  Nil
+                )
+              )
+            )
+          )
+        )
+      },
+      test("derives schema for case class with inner opaque type fields") {
+        import InnerId.schema
+
+        val value1 = InnerOpaque(InnerId.applyUnsafe("VVV"), InnerValue(1))
+        val value2 = InnerOpaque(InnerId.applyUnsafe("!!!"), InnerValue(1))
+        val schema = Schema[InnerOpaque]
+        assert(schema)(
+          equalTo(
+            new Schema[InnerOpaque](
+              reflect = Reflect.Record[Binding, InnerOpaque](
+                fields = Vector(
+                  Schema[InnerId].reflect.asTerm("id"),
+                  Schema[Int].reflect.asTerm("value")
+                ),
+                typeName = TypeName(Namespace.zioBlocksSchema, "InnerOpaque"),
+                recordBinding = null
+              )
+            )
+          )
+        ) &&
+        assert(InnerOpaque.id.get(value1))(equalTo(InnerId.applyUnsafe("VVV"))) &&
+        assert(InnerOpaque.id_wrapped.getOption(value2))(isSome(equalTo("!!!"))) &&
+        assert(InnerOpaque.value.get(value1))(equalTo(InnerValue(1))) &&
+        assert(InnerOpaque.id.replace(value1, InnerId.applyUnsafe("!!!")))(equalTo(value2)) &&
+        assert(InnerOpaque.id_wrapped.replace(value1, "!!!"))(equalTo(value1)) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(value2)))(
+          isLeft(
+            equalTo(
+              SchemaError(errors =
+                ::(
+                  SchemaError.InvalidType(
+                    source = DynamicOptic(nodes = Vector(DynamicOptic.Node.Field(name = "id"))),
+                    expectation = "Expected InnerId: Expected a string with letter or digit characters"
+                  ),
+                  Nil
+                )
+              )
+            )
+          )
+        )
+      },
+      test("derives schema for tuples with more than 22 fields") {
+        type Tuple24 = (
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          InnerValue,
+          InnerId,
+          Value,
+          Id,
+          Box1,
+          Box2,
+          Int,
+          String
+        )
+
+        object Tuple24 extends CompanionOptics[Tuple24] {
+          implicit val schema: Schema[Tuple24] = Schema.derived
+          val i17: Lens[Tuple24, InnerValue]   = $(_(16))
+          val i18: Lens[Tuple24, InnerId]      = $(_.apply(17))
+          val o19: Lens[Tuple24, Value]        = $(_(18))
+          val o20: Lens[Tuple24, Id]           = $(_.apply(19))
+          val b21: Lens[Tuple24, Box1]         = $(_(20))
+          val b22: Lens[Tuple24, Box2]         = $(_.apply(21))
+          val i23: Lens[Tuple24, Int]          = $(_(22))
+          val s24: Lens[Tuple24, String]       = $(_.apply(23))
+        }
+
+        val record = Tuple24.schema.reflect.asRecord
+        val value  = (
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          InnerValue(17),
+          InnerId.applyUnsafe("18"),
+          Value(19),
+          Id.applyUnsafe("20"),
+          Box1(21L),
+          Box2("22"),
+          23,
+          "24"
+        )
+        assert(record.map(_.constructor.usedRegisters))(isSome(equalTo(RegisterOffset(ints = 19, objects = 5)))) &&
+        assert(record.map(_.deconstructor.usedRegisters))(isSome(equalTo(RegisterOffset(ints = 19, objects = 5)))) &&
+        assert(Tuple24.i17.get(value))(equalTo(InnerValue(17))) &&
+        assert(Tuple24.i18.get(value))(equalTo(InnerId.applyUnsafe("18"))) &&
+        assert(Tuple24.o19.get(value))(equalTo(Value(19))) &&
+        assert(Tuple24.o20.get(value))(equalTo(Id.applyUnsafe("20"))) &&
+        assert(Tuple24.b21.get(value))(equalTo(Box1(21L))) &&
+        assert(Tuple24.b22.get(value))(equalTo(Box2("22"))) &&
+        assert(Tuple24.i23.get(value))(equalTo(23)) &&
+        assert(Tuple24.s24.get(value))(equalTo("24")) &&
+        assert(Tuple24.schema.fromDynamicValue(Tuple24.schema.toDynamicValue(value)))(isRight(equalTo(value)))
+      }
+    ),
+    suite("Reflect.Variant")(
+      test("derives schema for sealed traits using 'derives' keyword") {
+
+        /** Variant: Variant1 */
+        sealed trait Variant1 derives Schema
+
+        /** Case: Case1 */
+        case class Case1(d: Double) extends Variant1 derives Schema
+
+        /** Case: Case2 */
+        case class Case2() extends Variant1 derives Schema
+
+        /** Case: Case3 */
+        case object Case3 extends Variant1 derives Schema
+
+        object Variant1 extends CompanionOptics[Variant1] {
+          val case1: Prism[Variant1, Case1]      = optic(_.when[Case1])
+          val case2: Prism[Variant1, Case2]      = optic(_.when[Case2])
+          val case3: Prism[Variant1, Case3.type] = optic(_.when[Case3.type])
+        }
+
+        val schema  = Schema[Variant1]
+        val variant = schema.reflect.asVariant
+        assert(Variant1.case1.getOption(Case1(0.1)))(isSome(equalTo(Case1(0.1)))) &&
+        assert(Variant1.case2.getOption(Case2()))(isSome(equalTo(Case2()))) &&
+        assert(Variant1.case3.getOption(Case3))(isSome(equalTo(Case3))) &&
+        assert(Variant1.case1.replace(Case1(0.1), Case1(0.2)))(equalTo(Case1(0.2))) &&
+        assert(Variant1.case2.replace(Case2(), Case2()))(equalTo(Case2())) &&
+        assert(Variant1.case3.replace(Case3, Case3))(equalTo(Case3)) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(Case1(0.1))))(isRight(equalTo(Case1(0.1)))) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(Case2())))(isRight(equalTo(Case2()))) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(Case3)))(isRight(equalTo(Case3))) &&
+        assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("Case1", "Case2", "Case3")))) &&
+        assert(variant.map(_.typeName))(
+          isSome(
+            equalTo(
+              TypeName(
+                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaVersionSpecificSpec", "spec")),
+                name = "Variant1"
+              )
+            )
+          )
+        ) &&
+        assert(variant.map(_.doc))(isSome(equalTo(Doc("/** Variant: Variant1 */"))))
+      },
       test("derives schema for Scala 3 enums using 'derives' keyword") {
         val schema  = Schema[Color]
-        val record1 = Schema[Color.Red.type].reflect.asInstanceOf[Reflect.Record[Binding, Color.Red.type]]
-        val record2 = Schema[Color.Mix].reflect.asInstanceOf[Reflect.Record[Binding, Color.Mix]]
-        assert(record1.modifiers)(
-          equalTo(
-            Seq(
-              Modifier.config("term-key", "term-value-1"),
-              Modifier.config("term-key", "term-value-2")
-            )
+        val variant = schema.reflect.asVariant
+        val record1 = variant.flatMap(_.cases(0).value.asRecord)
+        val record2 = variant.flatMap(_.cases(1).value.asRecord)
+        val record3 = variant.flatMap(_.cases(2).value.asRecord)
+        val record4 = variant.flatMap(_.cases(3).value.asRecord)
+        assert(record1.map(_.modifiers))(
+          isSome(
+            equalTo(Seq(Modifier.config("term-key-1", "term-value-1"), Modifier.config("term-key-1", "term-value-2")))
           )
         ) &&
-        assert(record2.modifiers)(
-          equalTo(
-            Seq(
-              Modifier.config("type-key", "type-value-1"),
-              Modifier.config("type-key", "type-value-2")
-            )
+        assert(record2.map(_.modifiers))(
+          isSome(
+            equalTo(Seq(Modifier.config("term-key-2", "term-value-1"), Modifier.config("term-key-2", "term-value-2")))
           )
         ) &&
+        assert(record3.map(_.modifiers))(
+          isSome(
+            equalTo(Seq(Modifier.config("term-key-3", "term-value-1"), Modifier.config("term-key-3", "term-value-2")))
+          )
+        ) &&
+        assert(record4.map(_.modifiers))(
+          isSome(
+            equalTo(Seq(Modifier.config("type-key", "type-value-1"), Modifier.config("type-key", "type-value-2")))
+          )
+        ) &&
+        assert(record1.map(_.doc))(isSome(equalTo(Doc("/** Term: Red */")))) &&
+        assert(record2.map(_.doc))(isSome(equalTo(Doc("/** Term: Green */")))) &&
+        assert(record3.map(_.doc))(isSome(equalTo(Doc("/** Term: Blue */")))) &&
+        assert(record4.map(_.doc))(isSome(equalTo(Doc("/** Type: Mix */")))) &&
         assert(Color.red.getOption(Color.Red))(isSome(equalTo(Color.Red))) &&
         assert(Color.mix.getOption(Color.Mix(0xffffff)))(isSome(equalTo(Color.Mix(0xffffff)))) &&
         assert(Color.mix_mix.getOption(Color.Mix(0xffffff)))(isSome(equalTo(0xffffff))) &&
@@ -128,116 +505,100 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         assert(schema.fromDynamicValue(schema.toDynamicValue(Color.Mix(0xff7733))))(
           isRight(equalTo(Color.Mix(0xff7733)))
         ) &&
-        assert(schema)(
-          equalTo(
-            new Schema[Color](
-              reflect = Reflect.Variant[Binding, Color](
-                cases = Seq(
-                  Schema[Color.Red.type].reflect.asTerm("Red"),
-                  Schema[Color.Green.type].reflect.asTerm("Green"),
-                  Schema[Color.Blue.type].reflect.asTerm("Blue"),
-                  Schema[Color.Mix].reflect.asTerm("Mix")
-                ),
-                typeName = TypeName(
-                  namespace = Namespace(
-                    packages = Seq("zio", "blocks", "schema"),
-                    values = Nil
-                  ),
-                  name = "Color"
-                ),
-                variantBinding = null
+        assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("Red", "Green", "Blue", "Mix")))) &&
+        assert(variant.map(_.typeName))(
+          isSome(
+            equalTo(
+              TypeName(
+                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaVersionSpecificSpec")),
+                name = "Color"
               )
             )
           )
-        )
+        ) &&
+        assert(variant.map(_.doc))(isSome(equalTo(Doc("/** Variant: Color */"))))
       },
       test("derives schema for type recursive Scala 3 enums") {
-        implicit val appleSchema  = Schema.derived[FruitEnum.Apple]
-        implicit val bananaSchema = Schema.derived[FruitEnum.Banana]
-        val schema                = Schema.derived[FruitEnum[_]]
+        val schema  = Schema.derived[FruitEnum[?]]
+        val variant = schema.reflect.asVariant
         assert(schema.fromDynamicValue(schema.toDynamicValue(FruitEnum.Apple("red"))))(
           isRight(equalTo(FruitEnum.Apple("red")))
         ) &&
         assert(schema.fromDynamicValue(schema.toDynamicValue(FruitEnum.Banana(0.5))))(
           isRight(equalTo(FruitEnum.Banana(0.5)))
         ) &&
-        assert(schema)(
-          equalTo(
-            new Schema[FruitEnum[_]](
-              reflect = Reflect.Variant[Binding, FruitEnum[_]](
-                cases = Seq(
-                  Schema[FruitEnum.Apple].reflect.asTerm("Apple"),
-                  Schema[FruitEnum.Banana].reflect.asTerm("Banana")
-                ),
-                typeName = TypeName(
-                  namespace = Namespace(
-                    packages = Seq("zio", "blocks", "schema"),
-                    values = Nil
-                  ),
-                  name = "FruitEnum"
-                ),
-                variantBinding = null
+        assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("Apple", "Banana")))) &&
+        assert(variant.map(_.typeName))(
+          isSome(
+            equalTo(
+              TypeName(
+                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaVersionSpecificSpec")),
+                name = "FruitEnum",
+                params = Seq(TypeName(Namespace.scala, "Any"))
               )
             )
           )
         )
       },
+      test("derives schema for Scala 3 unions") {
+        type Value = Int | Boolean
+
+        implicit val schema: Schema[Value] = Schema.derived
+
+        object Value extends CompanionOptics[Value] {
+          val int: Prism[Value, Int]         = $(_.when[Int])
+          val boolean: Prism[Value, Boolean] = $(_.when[Boolean])
+        }
+
+        val variant = schema.reflect.asVariant
+        assert(Value.int.getOption(123))(isSome(equalTo(123))) &&
+        assert(Value.boolean.getOption(true))(isSome(equalTo(true))) &&
+        assert(Value.int.replace(123, 321))(equalTo(321)) &&
+        assert(Value.boolean.replace(true, false))(equalTo(false)) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(123)))(isRight(equalTo(123))) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(true)))(isRight(equalTo(true))) &&
+        assert(schema)(not(equalTo(Schema.derived[Boolean | Int]))) &&
+        assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("Int", "Boolean")))) &&
+        assert(variant.map(_.typeName))(
+          isSome(equalTo(TypeName(namespace = Namespace(packages = Nil), name = "|")))
+        )
+      },
       test("derives schema for recursive generic Scala 3 enums") {
-        implicit val endSchema       = Schema.derived[LinkedList.End.type]
-        implicit lazy val nodeSchema = Schema.derived[LinkedList.Node[Int]]
-        implicit lazy val schema     = Schema.derived[LinkedList[Int]]
+        val schema  = Schema.derived[LinkedList[Int]]
+        val variant = schema.reflect.asVariant
         assert(schema.fromDynamicValue(schema.toDynamicValue(LinkedList.Node(2, LinkedList.Node(1, LinkedList.End)))))(
           isRight(equalTo(LinkedList.Node(2, LinkedList.Node(1, LinkedList.End))))
         ) &&
-        assert(schema)(
-          equalTo(
-            new Schema[LinkedList[Int]](
-              reflect = Reflect.Variant[Binding, LinkedList[Int]](
-                cases = Seq(
-                  Schema[LinkedList.End.type].reflect.asTerm("End"),
-                  Schema[LinkedList.Node[Int]].reflect.asTerm("Node")
-                ),
-                typeName = TypeName(
-                  namespace = Namespace(
-                    packages = Seq("zio", "blocks", "schema"),
-                    values = Nil
-                  ),
-                  name = "LinkedList"
-                ),
-                variantBinding = null
+        assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("End", "Node")))) &&
+        assert(variant.map(_.typeName))(
+          isSome(
+            equalTo(
+              TypeName(
+                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaVersionSpecificSpec")),
+                name = "LinkedList",
+                params = Seq(TypeName.int)
               )
             )
           )
         )
       },
       test("derives schema for higher-kinded Scala 3 enums") {
-        import OptionSchemas._
-
-        implicit val case1Schema = Schema.derived[HKEnum.Case1[Option]]
-        implicit val case2Schema = Schema.derived[HKEnum.Case2[Option]]
-        val schema               = Schema.derived[HKEnum[Option]]
+        val schema  = Schema.derived[HKEnum[Option]]
+        val variant = schema.reflect.asVariant
         assert(schema.fromDynamicValue(schema.toDynamicValue(HKEnum.Case1(Some(1)))))(
           isRight(equalTo(HKEnum.Case1(Some(1))))
         ) &&
         assert(schema.fromDynamicValue(schema.toDynamicValue(HKEnum.Case2(Some("WWW")))))(
           isRight(equalTo(HKEnum.Case2(Some("WWW"))))
         ) &&
-        assert(schema)(
-          equalTo(
-            new Schema[HKEnum[Option]](
-              reflect = Reflect.Variant[Binding, HKEnum[Option]](
-                cases = Seq(
-                  Schema[HKEnum.Case1[Option]].reflect.asTerm("Case1"),
-                  Schema[HKEnum.Case2[Option]].reflect.asTerm("Case2")
-                ),
-                typeName = TypeName(
-                  namespace = Namespace(
-                    packages = Seq("zio", "blocks", "schema"),
-                    values = Nil
-                  ),
-                  name = "HKEnum"
-                ),
-                variantBinding = null
+        assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("Case1", "Case2")))) &&
+        assert(variant.map(_.typeName))(
+          isSome(
+            equalTo(
+              TypeName(
+                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaVersionSpecificSpec")),
+                name = "HKEnum",
+                params = Seq(TypeName(Namespace.scala, "Option"))
               )
             )
           )
@@ -245,41 +606,122 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
       }
     )
   )
-}
 
-enum Color(val rgb: Int) derives Schema:
-  @Modifier.config("term-key", "term-value-1") @Modifier.config("term-key", "term-value-2") case Red
-      extends Color(0xff0000)
-  case Green extends Color(0x00ff00)
-  case Blue  extends Color(0x0000ff)
-  @Modifier.config("type-key", "type-value-1") @Modifier.config("type-key", "type-value-2") case Mix(mix: Int)
-      extends Color(mix)
+  /** Variant: Color */
+  enum Color(val rgb: Int) derives Schema:
+    /** Term: Red */
+    @Modifier.config("term-key-1", "term-value-1") @Modifier.config("term-key-1", "term-value-2") case Red
+        extends Color(0xff0000)
 
-object Color extends CompanionOptics[Color] {
-  implicit val redSchema: Schema[Color.Red.type]     = Schema.derived
-  implicit val greenSchema: Schema[Color.Green.type] = Schema.derived
-  implicit val blueSchema: Schema[Color.Blue.type]   = Schema.derived
+    /** Term: Green */
+    @Modifier.config("term-key-2", "term-value-1") @Modifier.config("term-key-2", "term-value-2") case Green
+        extends Color(0x00ff00)
 
-  object Mix extends CompanionOptics[Color.Mix] {
-    implicit val schema: Schema[Color.Mix] = Schema.derived
-    val mix: Lens[Color.Mix, Int]          = field(_.mix)
+    /** Term: Blue */
+    @Modifier.config("term-key-3", "term-value-1") @Modifier.config("term-key-3", "term-value-2") case Blue
+        extends Color(0x0000ff)
+
+    /** Type: Mix */
+    @Modifier.config("type-key", "type-value-1") @Modifier.config("type-key", "type-value-2") case Mix(mix: Int)
+        extends Color(mix)
+
+  object Color extends CompanionOptics[Color] {
+    val red: Prism[Color, Color.Red.type]     = $(_.when[Color.Red.type])
+    val green: Prism[Color, Color.Green.type] = $(_.when[Color.Green.type])
+    val blue: Prism[Color, Color.Blue.type]   = $(_.when[Color.Blue.type])
+    val mix: Prism[Color, Color.Mix]          = $(_.when[Color.Mix])
+    val mix_mix: Optional[Color, Int]         = $(_.when[Color.Mix].mix)
   }
 
-  val red: Prism[Color, Color.Red.type]     = caseOf
-  val green: Prism[Color, Color.Green.type] = caseOf
-  val blue: Prism[Color, Color.Blue.type]   = caseOf
-  val mix: Prism[Color, Color.Mix]          = caseOf
-  val mix_mix: Optional[Color, Int]         = mix(Mix.mix)
+  enum FruitEnum[T <: FruitEnum[T]]:
+    case Apple(color: String)      extends FruitEnum[Apple]
+    case Banana(curvature: Double) extends FruitEnum[Banana]
+
+  enum LinkedList[+T]:
+    case End
+    case Node(value: T, next: LinkedList[T])
+
+  enum HKEnum[A[_]]:
+    case Case1(a: A[Int])    extends HKEnum[A]
+    case Case2(a: A[String]) extends HKEnum[A]
+
+  case class Box1(l: Long) extends AnyVal derives Schema
+
+  case class Box2(s: String) extends AnyVal derives Schema
+
+  opaque type InnerId <: String = String
+
+  object InnerId {
+    implicit val schema: Schema[InnerId] = Schema(
+      Reflect.Wrapper(
+        wrapped = Reflect.string[Binding], // Cannot use `Schema[String].reflect` here
+        typeName = TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaVersionSpecificSpec")), "InnerId"),
+        wrapperBinding = Binding.Wrapper(s => InnerId(s), identity)
+      )
+    )
+
+    def apply(s: String): Either[String, InnerId] =
+      if (s.forall(_.isLetterOrDigit)) Right(s)
+      else Left("Expected a string with letter or digit characters")
+
+    def applyUnsafe(s: String): InnerId = s
+  }
+
+  opaque type OpaqueInt = Int
+
+  opaque type InnerValue = OpaqueInt
+
+  object InnerValue {
+    inline def apply(i: Int): InnerValue = i
+
+    extension (x: InnerValue) {
+      inline def toInt: Int = x
+    }
+  }
 }
 
-enum FruitEnum[T <: FruitEnum[T]]:
-  case Apple(color: String)      extends FruitEnum[Apple]
-  case Banana(curvature: Double) extends FruitEnum[Banana]
+case class InnerOpaque(id: InnerId, value: InnerValue) derives Schema
 
-enum LinkedList[+T]:
-  case End
-  case Node(value: T, @Modifier.deferred next: LinkedList[T])
+object InnerOpaque extends CompanionOptics[InnerOpaque] {
+  val id: Lens[InnerOpaque, InnerId]            = $(_.id)
+  val value: Lens[InnerOpaque, InnerValue]      = $(_.value)
+  val id_wrapped: Optional[InnerOpaque, String] = $(_.id.wrapped[String])
+}
 
-enum HKEnum[A[_]]:
-  case Case1[A[_]](a: A[Int])    extends HKEnum[A]
-  case Case2[A[_]](a: A[String]) extends HKEnum[A]
+opaque type UniqueId[+A] = String
+
+trait SomeType
+
+type Id = UniqueId[SomeType]
+
+object Id {
+  implicit val schema: Schema[Id] = Schema(
+    Reflect.Wrapper(
+      wrapped = Reflect.string[Binding], // Cannot use `Schema[String].reflect` here
+      typeName = TypeName(Namespace.zioBlocksSchema, "Id"),
+      wrapperBinding = Binding.Wrapper(s => Id(s), identity)
+    )
+  )
+
+  def apply(s: String): Either[String, Id] =
+    if (s.forall(_.isLetterOrDigit)) Right(s)
+    else Left("Expected a string with letter or digit characters")
+
+  def applyUnsafe(s: String): Id = s
+}
+
+opaque type Value <: Int = Int
+
+object Value {
+  inline def apply(i: Int): Value = i
+}
+
+import Id.schema
+
+case class Opaque(id: Id, value: Value) derives Schema
+
+object Opaque extends CompanionOptics[Opaque] {
+  val id: Lens[Opaque, Id]                 = $(_.id)
+  val value: Lens[Opaque, Value]           = $(_.value)
+  val id_wrapped: Optional[Opaque, String] = $(_.id.wrapped[String])
+}

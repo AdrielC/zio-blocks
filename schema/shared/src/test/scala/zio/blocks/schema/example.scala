@@ -5,11 +5,11 @@ object example {
 
   object Person extends CompanionOptics[Person] {
     implicit val schema: Schema[Person]      = Schema.derived
-    val id: Lens[Person, Long]               = field(_.id)
-    val name: Lens[Person, String]           = field(_.name)
-    val age: Lens[Person, Int]               = field(_.age)
-    val address: Lens[Person, String]        = field(_.address)
-    val childrenAges: Traversal[Person, Int] = field(_.childrenAges).listValues
+    val id: Lens[Person, Long]               = optic(_.id)
+    val name: Lens[Person, String]           = optic(_.name)
+    val age: Lens[Person, Int]               = optic(_.age)
+    val address: Lens[Person, String]        = optic(_.address)
+    val childrenAges: Traversal[Person, Int] = optic(_.childrenAges.each)
   }
 
   def main(args: Array[String]): Unit = {
@@ -21,5 +21,7 @@ object example {
     println("address:    " + Person.address.get(person))
     println("newPerson:  " + Person.name.replace(person, "Jane"))
     println("newPerson2: " + Person.childrenAges.modify(person, _ + 1))
+    println("(Person.id != 1).eval(person): " + (Person.id != 1).eval(person))
+    println("(Person.age + 1).eval(person): " + (Person.age + 1).eval(person))
   }
 }
