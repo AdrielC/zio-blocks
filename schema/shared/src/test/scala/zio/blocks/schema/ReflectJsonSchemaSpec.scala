@@ -37,6 +37,27 @@ object ReflectJsonSchemaSpec extends ZIOSpecDefault {
 
   def spec =
     suite("ReflectJsonSchemaSpec")(
+      test("recursive schema emits $defs and $ref") {
+
+        final case class Node(next: Option[Node])
+
+        val nodeType: TypeName[Node] = TypeName(Namespace(List("example")), "Node")
+
+        lazy val node: Reflect[NoBinding, Node] = Reflect.Deferred(() =>
+          Reflect.Record(
+            Vector(
+              Term("next", Reflect.Deferred(() => node))
+            ),
+            nodeType,
+            NoBinding()
+          )
+        )
+
+        val _    = Node(None)
+        val dv   = node.toJsonSchema
+        val json = dv.toJson
+        assertTrue(json.contains("\"$defs\"")) && assertTrue(json.contains("\"$ref\""))
+      },
       test("primitive round-trip") {
         val s = Reflect.int[Binding].noBinding
         roundTrip(s)
