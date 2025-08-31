@@ -142,7 +142,8 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
 
   def toDynamicValue(value: A)(implicit F: HasBinding[F]): DynamicValue
 
-  def toJsonSchema: DynamicValue = JsonSchema.toJsonSchema(this)
+  def toJsonSchema(implicit config: json.JsonSchemaConfig): DynamicValue = 
+    JsonSchema.toJsonSchema(this)
 
   /**
    * Rebind this Reflect using a TypeRegistry to create a fully bound Schema.
@@ -225,8 +226,7 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
               Left(RebindError.TypeNotFound(v.typeName))
           }
         }
-      case s: Reflect.Sequence[F, A, List] =>
-        val seq = s
+      case seq: Reflect.Sequence[F, A, List] @unchecked =>
         seq.element.rebindWithRegistry(typeRegistry) match {
           case Right(reboundElement) =>
             typeRegistry.lookup(seq.typeName) match {
@@ -246,22 +246,19 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
           case Left(error) =>
             Left(RebindError.NestedError(seq.element.typeName, error))
         }
-      case m: Reflect.Map[_, _, _, _] =>
-        val map = m.asInstanceOf[Reflect.Map[F, Any, Any, scala.collection.immutable.Map]]
+      case map: Reflect.Map[F, Any, Any, Map] @unchecked =>
         for {
           reboundKey   <- map.key.rebindWithRegistry(typeRegistry)
           reboundValue <- map.value.rebindWithRegistry(typeRegistry)
           binding      <- typeRegistry.lookup(map.typeName) match {
-                       case Some(b) => Right(b)
-                       case None    => Left(RebindError.TypeNotFound(map.typeName))
-                     }
+            case Some(b) => Right(b)
+            case None    => Left(RebindError.TypeNotFound(map.typeName))
+          }
         } yield Reflect.Map(
           reboundKey.asInstanceOf[Reflect[Binding, Any]],
           reboundValue.asInstanceOf[Reflect[Binding, Any]],
-          map.typeName.asInstanceOf[TypeName[scala.collection.immutable.Map[Any, Any]]],
-          binding.asInstanceOf[
-            Binding[BindingType.Map[scala.collection.immutable.Map], scala.collection.immutable.Map[Any, Any]]
-          ],
+          map.typeName.asInstanceOf[TypeName[Map[Any, Any]]],
+          binding.asInstanceOf[Binding[BindingType.Map[Map], Map[Any, Any]]],
           map.doc,
           map.modifiers
         )

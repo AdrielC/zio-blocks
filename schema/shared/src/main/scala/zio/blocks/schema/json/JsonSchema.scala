@@ -1,14 +1,14 @@
 package zio.blocks.schema
 package json
 
-import binding.*
-import scala.collection.immutable.ArraySeq
+import scala.collection.immutable.{ArraySeq, ListMap}
 import scala.collection.mutable
+import scala.util.matching.Regex
+import zio.blocks.schema.binding.{Binding, NoBinding}
 
 /**
  * JsonSchema AST representation with support for bindings, validations, and
- * custom configurations. Inspired by andyglow/scala-jsonschema but tailored for
- * ZIO Blocks.
+ * custom configurations.
  */
 sealed trait JsonSchema[+T] {
   def jsonType: String
@@ -16,6 +16,8 @@ sealed trait JsonSchema[+T] {
   def description: Option[String]        = None
   def zioValidations: Seq[ZioValidation] = Seq.empty
   def zioModifiers: Seq[ZioModifier]     = Seq.empty
+  def toDynamicValue(implicit config: JsonSchemaConfig): DynamicValue = 
+    JsonSchema.schemaToDynamicValue(this)
 }
 
 case class ZioValidation(
@@ -43,13 +45,14 @@ case class JsonSchemaConfig(
   includeDefaults: Boolean = true,
   namespacePrefix: String = "zio",
   validationAsComments: Boolean = false,
-  validationAsGrammar: Boolean = false
+  validationAsGrammar: Boolean = false,
+  additionalProperties: ListMap[Regex, Option[Boolean]] = ListMap.empty
 ) {
-  val nodeTypeKey: String = s"$namespacePrefix:nodeType"
-  val typeNameKey: String = s"$namespacePrefix:typeName"
+  val nodeTypeKey: String  = s"$namespacePrefix:nodeType"
+  val typeNameKey: String  = s"$namespacePrefix:typeName"
   val primitiveKey: String = s"$namespacePrefix:primitive"
-  val keyKey: String = s"$namespacePrefix:key"
-  val wrappedKey: String = s"$namespacePrefix:wrapped"
+  val keyKey: String       = s"$namespacePrefix:key"
+  val wrappedKey: String   = s"$namespacePrefix:wrapped"
 }
 
 object JsonSchemaConfig {
@@ -60,7 +63,8 @@ object JsonSchemaConfig {
     includeBindings = false,
     includeModifiers = false,
     includeExamples = false,
-    includeDefaults = false
+    includeDefaults = false,
+    additionalProperties = ListMap.empty
   )
 }
 
@@ -89,12 +93,15 @@ object JsonSchema {
 
   case class `object`[T](
     properties: Map[String, JsonSchema[?]],
-    required: Seq[String] = Seq.empty
+    required: Seq[String] = Seq.empty,
+    additionalProperties: Option[Boolean] = None,
+    override val title: Option[String] = None,
+    override val description: Option[String] = None
   ) extends JsonSchema[T] {
     override def jsonType: String = "object"
   }
 
-  case class `oneof`[T](alternatives: Seq[JsonSchema[?]]) extends JsonSchema[T] {
+  case class `oneof`[T](alternatives: Seq[JsonSchema[? <: T]]) extends JsonSchema[T] {
     override def jsonType: String = "oneOf"
   }
 
@@ -110,7 +117,7 @@ object JsonSchema {
   }
 
   case class `zio-record`[T](
-    typeName: String,
+    typeName: TypeName[T],
     fields: Map[String, JsonSchema[?]],
     required: Seq[String] = Seq.empty,
     override val title: Option[String] = None,
@@ -121,7 +128,7 @@ object JsonSchema {
   }
 
   case class `zio-variant`[T](
-    typeName: String,
+    typeName: TypeName[T],
     cases: Map[String, JsonSchema[?]],
     override val title: Option[String] = None,
     override val description: Option[String] = None,
@@ -133,14 +140,14 @@ object JsonSchema {
   // Conversion methods
   def fromReflect[F[_, _], A](reflect: Reflect[F, A])(implicit config: JsonSchemaConfig): JsonSchema[A] =
     (reflect: Any) match {
-      case p: Reflect.Primitive[?, ?]   => fromPrimitive(p.asInstanceOf[Reflect.Primitive[F, A]])
-      case r: Reflect.Record[?, ?]      => fromRecord(r.asInstanceOf[Reflect.Record[F, A]])
-      case v: Reflect.Variant[?, ?]     => fromVariant(v.asInstanceOf[Reflect.Variant[F, A]])
-      case s: Reflect.Sequence[?, ?, _] => fromSequence(s, config).asInstanceOf[JsonSchema[A]]
-      case m: Reflect.Map[?, ?, ?, ?]   => fromMap(m, config).asInstanceOf[JsonSchema[A]]
-      case d: Reflect.Dynamic[?]        => fromDynamic(d.asInstanceOf[Reflect.Dynamic[F]], config).asInstanceOf[JsonSchema[A]]
-      case w: Reflect.Wrapper[?, ?, ?]  => fromWrapper(w.asInstanceOf[Reflect.Wrapper[F, A, Any]])(config)
-      case d: Reflect.Deferred[?, ?]    => fromReflect(d.value.asInstanceOf[Reflect[F, A]])(config)
+      case p: Reflect.Primitive[F, A] @unchecked => fromPrimitive(p)
+      case r: Reflect.Record[F, A] @unchecked => fromRecord(r)
+      case v: Reflect.Variant[F, A] @unchecked => fromVariant(v)
+      case s: Reflect.Sequence[F, _, _] @unchecked => fromSequence(s).asInstanceOf[JsonSchema[A]]
+      case m: Reflect.Map[F, _, _, _] @unchecked => fromMap(m).asInstanceOf[JsonSchema[A]]
+      case d: Reflect.Dynamic[F] @unchecked => fromDynamic(d).asInstanceOf[JsonSchema[A]]
+      case w: Reflect.Wrapper[F, _, _] @unchecked => fromWrapper(w).asInstanceOf[JsonSchema[A]]
+      case d: Reflect.Deferred[F, A] @unchecked => fromReflect(d.value)
     }
 
   private def fromPrimitive[F[_, _], A](
@@ -168,16 +175,18 @@ object JsonSchema {
       }
     }
 
-  private def fromRecord[F[_, _], A](rec: Reflect.Record[F, A])(implicit config: JsonSchemaConfig): JsonSchema[A] = {
+  private def fromRecord[F[_, _], A](
+    rec: Reflect.Record[F, A]
+  )(implicit config: JsonSchemaConfig): JsonSchema[A] = {
     val properties = rec.fields.map { f =>
-      f.name -> fromReflect(f.value)(config)
+      f.name -> fromReflect(f.value)
     }.toMap
 
     val required = rec.fields.map(_.name).toSeq
 
     if (config.includeZioExtensions) {
       `zio-record`[A](
-        typeName = rec.typeName.name,
+        typeName = rec.typeName,
         fields = properties,
         required = required,
         title = Some(rec.typeName.name),
@@ -185,7 +194,8 @@ object JsonSchema {
         zioModifiers = if (config.includeModifiers) extractModifiers(rec.modifiers) else Seq.empty
       )
     } else {
-      `object`[A](properties, required)
+      val open = openRecordFlag(rec.typeName)
+      `object`[A](properties, required, additionalProperties = open)
     }
   }
 
@@ -193,12 +203,12 @@ object JsonSchema {
     variant: Reflect.Variant[F, A]
   )(implicit config: JsonSchemaConfig): JsonSchema[A] = {
     val cases = variant.cases.map { c =>
-      c.name -> fromReflect(c.value)(config)
+      c.name -> fromReflect(c.value)
     }.toMap
 
     if (config.includeZioExtensions) {
       `zio-variant`[A](
-        typeName = variant.typeName.name,
+        typeName = variant.typeName,
         cases = cases,
         title = Some(variant.typeName.name),
         description = if (variant.doc != Doc.Empty) Some(docToString(variant.doc)) else None,
@@ -209,9 +219,10 @@ object JsonSchema {
         `object`[A](
           properties = Map(
             "tag"   -> `string`(),
-            "value" -> fromReflect(c.value)(config)
+            "value" -> fromReflect(c.value)
           ),
-          required = Seq("tag", "value")
+          required = Seq("tag", "value"),
+          additionalProperties = openRecordFlagName(c.name)
         )
       }
       `oneof`[A](alternatives)
@@ -219,34 +230,39 @@ object JsonSchema {
   }
 
   private def fromSequence[F[_, _], A, C[_]](
-    seq: Reflect.Sequence[F, A, C],
-    config: JsonSchemaConfig
-  ): JsonSchema[C[A]] = {
-    val elementSchema = fromReflect(seq.element)(config)
+    seq: Reflect.Sequence[F, A, C]
+  )(implicit config: JsonSchemaConfig): JsonSchema[C[A]] = {
+    val elementSchema = fromReflect(seq.element)
     `array`(elementSchema).asInstanceOf[JsonSchema[C[A]]]
   }
 
   private def fromMap[F[_, _], K, V, M[_, _]](
-    map: Reflect.Map[F, K, V, M],
-    config: JsonSchemaConfig
+    map: Reflect.Map[F, K, V, M]
   ): JsonSchema[M[K, V]] = {
-    val valueSchema = fromReflect(map.value)(config)
     `object`[M[K, V]](
       properties = Map.empty, // Maps use additionalProperties instead
-      required = Seq.empty
+      required = Seq.empty,
+      additionalProperties = openRecordFlag(map.typeName),
+      title = Some(map.typeName.name),
+      description = if (map.doc != Doc.Empty) Some(docToString(map.doc)) else None
     )
   }
 
-  private def fromDynamic[F[_, _]](dyn: Reflect.Dynamic[F], config: JsonSchemaConfig): JsonSchema[DynamicValue] =
+  private def fromDynamic[F[_, _]](
+    dyn: Reflect.Dynamic[F]
+  ): JsonSchema[DynamicValue] =
     `object`[DynamicValue](
       properties = Map.empty,
-      required = Seq.empty
+      required = Seq.empty,
+      additionalProperties = Some(true),
+      title = Some(dyn.typeName.name),
+      description = if (dyn.doc != Doc.Empty) Some(docToString(dyn.doc)) else None
     )
 
-  private def fromWrapper[F[_, _], A, B](wrap: Reflect.Wrapper[F, A, B])(implicit
-    config: JsonSchemaConfig
-  ): JsonSchema[A] =
-    fromReflect(wrap.wrapped)(config).asInstanceOf[JsonSchema[A]]
+  private def fromWrapper[F[_, _], A, B](
+    wrap: Reflect.Wrapper[F, A, B]
+)(implicit config: JsonSchemaConfig): JsonSchema[A] =
+    fromReflect(wrap.wrapped).asInstanceOf[JsonSchema[A]]
 
   // Helper methods
   private def jsonType(pt: PrimitiveType[?]): String = pt match {
@@ -272,6 +288,12 @@ object JsonSchema {
     doc.flatten.foreach { case Doc.Text(v) => sb.append(v); case _ => () }
     sb.toString
   }
+
+  private def openRecordFlag(tn: TypeName[?])(implicit config: JsonSchemaConfig): Option[Boolean] =
+    openRecordFlagName(typeNameToString(tn))
+
+  private def openRecordFlagName(name: String)(implicit config: JsonSchemaConfig): Option[Boolean] =
+    config.additionalProperties.collectFirst { case (rx, flag) if rx.findFirstIn(name).isDefined => flag }.flatten
 
   private def extractFormat(pt: PrimitiveType[?]): Option[String] = pt match {
     case _: PrimitiveType.Instant        => Some("date-time")
@@ -337,16 +359,21 @@ object JsonSchema {
     modifiers.map {
       case Modifier.config(k, v) => ZioModifier("config", Some(k), Some(v), None)
       case _: Modifier.transient => ZioModifier("transient", None, None, None)
-      case _                     => ZioModifier("unknown", None, None, None)
     }
 
   /**
    * Convert a Reflect to a proper JSON Schema DynamicValue. The result will be
    * a valid JSON Schema that can be serialized to JSON.
    */
-  def toJsonSchema[F[_, _], A](r: Reflect[F, A]): DynamicValue = {
-    val ctx  = new GenCtx(mutable.LinkedHashMap.empty[String, DynamicValue], mutable.HashSet.empty[String])
-    val root = reflectToJsonSchemaDynamicWithCtx(r, JsonSchemaConfig.default, ctx)
+  def toJsonSchema[F[_, _], A](
+    r: Reflect[F, A]
+  )(implicit config: JsonSchemaConfig): DynamicValue = {
+    val ctx = new GenCtx(
+      mutable.LinkedHashMap.empty[String, DynamicValue],
+      mutable.HashSet.empty[String],
+      mutable.HashMap.empty[String, DynamicValue]
+    )
+    val root = reflectToJsonSchemaDynamicWithCtx(r, config, ctx)
     if (ctx.defs.isEmpty) root
     else
       root match {
@@ -375,13 +402,14 @@ object JsonSchema {
   // Context for $defs/$ref emission and cycle detection
   private final case class GenCtx(
     defs: mutable.LinkedHashMap[String, DynamicValue],
-    visiting: mutable.HashSet[String]
+    visiting: mutable.HashSet[String],
+    memo: mutable.HashMap[String, DynamicValue]
   )
 
   private def defKey(tn: TypeName[?]): String = typeNameToString(tn)
 
   private def makeRef(key: String): DynamicValue =
-    DynamicValue.Record(ArraySeq("$ref" -> dvString(s"#/$$defs/$key")))
+    dvRecord(ArraySeq("$ref" -> dvString(s"#/$$defs/$key")))
 
   private def reflectToJsonSchemaDynamicWithCtx[F[_, _], A](
     reflect: Reflect[F, A],
@@ -392,7 +420,8 @@ object JsonSchema {
       case p: Reflect.Primitive[F, A] =>
         val prim = p
         val key  = defKey(prim.typeName)
-        if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
+        if (ctx.memo.contains(key)) ctx.memo(key)
+        else if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
         else {
           ctx.visiting += key
           val fields = ArraySeq.newBuilder[(String, DynamicValue)]
@@ -405,20 +434,23 @@ object JsonSchema {
           extractPattern(prim.primitiveType).foreach(px => fields += "pattern" -> dvString(px))
           if (prim.doc != Doc.Empty) fields += "description" -> dvString(docToString(prim.doc))
           if (config.includeZioExtensions) {
-            fields += s"${config.zioNodeTypePrefix}:nodeType"  -> dvString("primitive")
-            fields += s"${config.zioNodeTypePrefix}:primitive" -> dvString(prim.primitiveType.typeName.name)
-            fields += s"${config.zioNodeTypePrefix}:typeName"  -> dvString(typeNameToString(prim.typeName))
+            fields += config.nodeTypeKey  -> dvString("primitive")
+            fields += config.primitiveKey -> dvString(prim.primitiveType.typeName.name)
+            fields += config.typeNameKey  -> dvString(typeNameToString(prim.typeName))
           }
-          val body = DynamicValue.Record(fields.result())
+          val body = dvRecord(fields.result())
           ctx.visiting -= key
           ctx.defs.put(key, body)
-          makeRef(key)
+          val ref = makeRef(key)
+          ctx.memo.put(key, ref)
+          ref
         }
 
       case r: Reflect.Record[_, _] =>
         val rec = r.asInstanceOf[Reflect.Record[F, A]]
         val key = defKey(rec.typeName)
-        if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
+        if (ctx.memo.contains(key)) ctx.memo(key)
+        else if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
         else {
           ctx.visiting += key
           val props = rec.fields.map { f =>
@@ -427,23 +459,27 @@ object JsonSchema {
           val required = rec.fields.map(_.name)
           val fields   = ArraySeq.newBuilder[(String, DynamicValue)]
           fields += "type"                                  -> dvString("object")
-          fields += "properties"                            -> DynamicValue.Record(ArraySeq.from(props))
-          fields += "required"                              -> DynamicValue.Sequence(ArraySeq.from(required.map(dvString)))
+          fields += "properties"                            -> dvRecord(ArraySeq.from(props))
+          fields += "required"                              -> dvSequence(ArraySeq.from(required.map(dvString)))
+          openRecordFlag(rec.typeName).foreach(b => fields += "additionalProperties" -> dvBoolean(b))
           if (rec.doc != Doc.Empty) fields += "description" -> dvString(docToString(rec.doc))
           if (config.includeZioExtensions) {
-            fields += s"${config.zioNodeTypePrefix}:nodeType" -> dvString("record")
-            fields += s"${config.zioNodeTypePrefix}:typeName" -> dvString(typeNameToString(rec.typeName))
+            fields += config.nodeTypeKey -> dvString("record")
+            fields += config.typeNameKey -> dvString(typeNameToString(rec.typeName))
           }
           val body = DynamicValue.Record(fields.result())
           ctx.visiting -= key
           ctx.defs.put(key, body)
-          makeRef(key)
+          val ref = makeRef(key)
+          ctx.memo.put(key, ref)
+          ref
         }
 
       case v: Reflect.Variant[_, _] =>
         val variant = v.asInstanceOf[Reflect.Variant[F, A]]
         val key     = defKey(variant.typeName)
-        if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
+        if (ctx.memo.contains(key)) ctx.memo(key)
+        else if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
         else {
           ctx.visiting += key
           val oneOf = variant.cases.map { c =>
@@ -456,6 +492,7 @@ object JsonSchema {
                     "value" -> reflectToJsonSchemaDynamicWithCtx(c.value, config, ctx)
                   )
                 ),
+                "additionalProperties" -> openRecordFlag(variant.typeName).map(dvBoolean).getOrElse(dvBoolean(false)),
                 "required" -> DynamicValue.Sequence(ArraySeq(dvString("tag"), dvString("value")))
               )
             )
@@ -464,19 +501,22 @@ object JsonSchema {
           fields += "oneOf"                                     -> DynamicValue.Sequence(ArraySeq.from(oneOf))
           if (variant.doc != Doc.Empty) fields += "description" -> dvString(docToString(variant.doc))
           if (config.includeZioExtensions) {
-            fields += s"${config.zioNodeTypePrefix}:nodeType" -> dvString("variant")
-            fields += s"${config.zioNodeTypePrefix}:typeName" -> dvString(typeNameToString(variant.typeName))
+            fields += config.nodeTypeKey -> dvString("variant")
+            fields += config.typeNameKey -> dvString(typeNameToString(variant.typeName))
           }
-          val body = DynamicValue.Record(fields.result())
+          val body = dvRecord(fields.result())
           ctx.visiting -= key
           ctx.defs.put(key, body)
-          makeRef(key)
+          val ref = makeRef(key)
+          ctx.memo.put(key, ref)
+          ref
         }
 
       case s: Reflect.Sequence[_, _, _] =>
         val seq = s.asInstanceOf[Reflect.Sequence[F, Any, List]]
         val key = defKey(seq.typeName)
-        if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
+        if (ctx.memo.contains(key)) ctx.memo(key)
+        else if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
         else {
           ctx.visiting += key
           val fields = ArraySeq.newBuilder[(String, DynamicValue)]
@@ -484,19 +524,22 @@ object JsonSchema {
           fields += "items"                                 -> reflectToJsonSchemaDynamicWithCtx(seq.element, config, ctx)
           if (seq.doc != Doc.Empty) fields += "description" -> dvString(docToString(seq.doc))
           if (config.includeZioExtensions) {
-            fields += "zio:nodeType" -> dvString("sequence")
-            fields += "zio:typeName" -> dvString(typeNameToString(seq.typeName))
+            fields += config.nodeTypeKey -> dvString("sequence")
+            fields += config.typeNameKey -> dvString(typeNameToString(seq.typeName))
           }
-          val body = DynamicValue.Record(fields.result())
+          val body = dvRecord(fields.result())
           ctx.visiting -= key
           ctx.defs.put(key, body)
-          makeRef(key)
+          val ref = makeRef(key)
+          ctx.memo.put(key, ref)
+          ref
         }
 
       case m: Reflect.Map[_, _, _, _] =>
         val map     = m.asInstanceOf[Reflect.Map[F, Any, Any, scala.collection.immutable.Map]]
         val keyName = defKey(map.typeName)
-        if (ctx.defs.contains(keyName) || ctx.visiting.contains(keyName)) makeRef(keyName)
+        if (ctx.memo.contains(keyName)) ctx.memo(keyName)
+        else if (ctx.defs.contains(keyName) || ctx.visiting.contains(keyName)) makeRef(keyName)
         else {
           ctx.visiting += keyName
           val fields = ArraySeq.newBuilder[(String, DynamicValue)]
@@ -504,39 +547,45 @@ object JsonSchema {
           fields += "additionalProperties"                  -> reflectToJsonSchemaDynamicWithCtx(map.value, config, ctx)
           if (map.doc != Doc.Empty) fields += "description" -> dvString(docToString(map.doc))
           if (config.includeZioExtensions) {
-            fields += s"${config.zioNodeTypePrefix}:nodeType" -> dvString("map")
-            fields += s"${config.zioNodeTypePrefix}:typeName" -> dvString(typeNameToString(map.typeName))
-            fields += s"${config.zioNodeTypePrefix}:key"      -> reflectToJsonSchemaDynamicWithCtx(map.key, config, ctx)
+            fields += config.nodeTypeKey -> dvString("map")
+            fields += config.typeNameKey -> dvString(typeNameToString(map.typeName))
+            fields += config.keyKey      -> reflectToJsonSchemaDynamicWithCtx(map.key, config, ctx)
           }
-          val body = DynamicValue.Record(fields.result())
+          val body = dvRecord(fields.result())
           ctx.visiting -= keyName
           ctx.defs.put(keyName, body)
-          makeRef(keyName)
+          val ref = makeRef(keyName)
+          ctx.memo.put(keyName, ref)
+          ref
         }
 
       case d: Reflect.Dynamic[?] =>
         val dyn = d.asInstanceOf[Reflect.Dynamic[F]]
         val key = defKey(dyn.typeName)
-        if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
+        if (ctx.memo.contains(key)) ctx.memo(key)
+        else if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
         else {
           ctx.visiting += key
           val fields = ArraySeq.newBuilder[(String, DynamicValue)]
           fields += "type"                                  -> dvString("object")
           if (dyn.doc != Doc.Empty) fields += "description" -> dvString(docToString(dyn.doc))
           if (config.includeZioExtensions) {
-            fields += s"${config.zioNodeTypePrefix}:nodeType" -> dvString("dynamic")
-            fields += s"${config.zioNodeTypePrefix}:typeName" -> dvString(typeNameToString(dyn.typeName))
+            fields += config.nodeTypeKey -> dvString("dynamic")
+            fields += config.typeNameKey -> dvString(typeNameToString(dyn.typeName))
           }
           val body = DynamicValue.Record(fields.result())
           ctx.visiting -= key
           ctx.defs.put(key, body)
-          makeRef(key)
+          val ref = makeRef(key)
+          ctx.memo.put(key, ref)
+          ref
         }
 
       case w: Reflect.Wrapper[_, _, _] =>
         val wrap = w.asInstanceOf[Reflect.Wrapper[F, A, Any]]
         val key  = defKey(wrap.typeName)
-        if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
+        if (ctx.memo.contains(key)) ctx.memo(key)
+        else if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
         else {
           ctx.visiting += key
           val wrappedSchema = reflectToJsonSchemaDynamicWithCtx(wrap.wrapped, config, ctx)
@@ -554,7 +603,9 @@ object JsonSchema {
           } else wrappedSchema
           ctx.visiting -= key
           ctx.defs.put(key, body)
-          makeRef(key)
+          val ref = makeRef(key)
+          ctx.memo.put(key, ref)
+          ref
         }
 
       case d: Reflect.Deferred[_, _] =>
@@ -562,21 +613,226 @@ object JsonSchema {
     }
   }
 
-  private def dynamicValueToReflect(value: DynamicValue): Either[SchemaError, Reflect[NoBinding, Any]] =
-    // Implementation for converting JSON Schema DynamicValue back to Reflect
-    // This is a placeholder - full implementation would parse all JSON Schema constructs
-    Left(SchemaError.invalidType(Nil, "fromJsonSchema implementation in progress"))
+    private def dynamicValueToReflect(
+        value: DynamicValue,
+        defs: Map[String, DynamicValue] = Map.empty
+    )(implicit config: JsonSchemaConfig): Either[SchemaError, Reflect[NoBinding, Any]] = {
+
+        def asString(dv: DynamicValue): Option[String] = dv match {
+        case DynamicValue.Primitive(PrimitiveValue.String(s)) => Some(s)
+        case _                                               => None
+        }
+
+        def fieldsOf(rec: DynamicValue): Option[ArraySeq[(String, DynamicValue)]] =
+        rec match {
+            case DynamicValue.Record(f) => Some(ArraySeq.from(f))
+            case _                      => None
+        }
+
+        def get(rec: ArraySeq[(String, DynamicValue)], key: String): Option[DynamicValue] =
+        rec.find(_._1 == key).map(_._2)
+
+        def stripDefs(
+            rec: ArraySeq[(String, DynamicValue)]
+        ): (ArraySeq[(String, DynamicValue)], Map[String, DynamicValue]) = {
+            val defs = get(rec, "$defs").flatMap(fieldsOf).map(_.toSeq.toMap).getOrElse(Map.empty)
+            val filtered = rec.filter(_._1 != "$defs")
+            (filtered, defs)
+        }
+
+        def resolveRef(path: String, defs: Map[String, DynamicValue]): Option[DynamicValue] = {
+            val idx = path.lastIndexOf('/')
+            if (idx >= 0 && idx + 1 < path.length) defs.get(path.substring(idx + 1)) else None
+        }
+
+        def parseTypeName(s: String): TypeName[Any] = {
+            val lastDot = s.lastIndexOf('.')
+            if (lastDot < 0) TypeName[Any](Namespace(Nil), s)
+            else TypeName[Any](Namespace(s.substring(0, lastDot).split('.').toList), s.substring(lastDot + 1))
+        }
+
+        def parsePrimitive(tpe: String, format: Option[String]): Reflect[NoBinding, Any] = {
+            (tpe, format) match {
+                case ("boolean", _) => Reflect.boolean[Binding].noBinding.asInstanceOf[Reflect[NoBinding, Any]]
+                case ("integer", _) => Reflect.int[Binding].noBinding.asInstanceOf[Reflect[NoBinding, Any]]
+                case ("number",  _) => Reflect.double[Binding].noBinding.asInstanceOf[Reflect[NoBinding, Any]]
+                case ("string",  Some("uuid")) => Reflect.uuid[Binding].noBinding.asInstanceOf[Reflect[NoBinding, Any]]
+                case ("string",  Some("date")) => Reflect.localDate[Binding].noBinding.asInstanceOf[Reflect[NoBinding, Any]]
+                case ("string",  Some("time")) => Reflect.localTime[Binding].noBinding.asInstanceOf[Reflect[NoBinding, Any]]
+                case ("string",  Some("date-time")) => Reflect.localDateTime[Binding].noBinding.asInstanceOf[Reflect[NoBinding, Any]]
+                case ("string",  _) => Reflect.string[Binding].noBinding.asInstanceOf[Reflect[NoBinding, Any]]
+                case ("null",    _) => Reflect.unit[Binding].noBinding.asInstanceOf[Reflect[NoBinding, Any]]
+                case _              => Reflect.string[Binding].noBinding.asInstanceOf[Reflect[NoBinding, Any]]
+            }
+        }
+
+        def parseObject(
+            rec: ArraySeq[(String, DynamicValue)],
+            defs: Map[String, DynamicValue]
+        )(implicit config: JsonSchemaConfig): Either[SchemaError, Reflect[NoBinding, Any]] = {
+            val (props, defs2) = stripDefs(rec)
+            val title = get(rec, "title").flatMap(asString)
+            val description = get(rec, "description").flatMap(asString)
+            val tn = title.map(parseTypeName).getOrElse(TypeName[Any](Namespace(Nil), "Object"))
+            val doc = description.map(Doc.Text(_)).getOrElse(Doc.Empty)
+
+            val defsOut = defs ++ defs2
+
+            val required = get(rec, "required").flatMap(asString)
+
+            val terms = props.map { case (name, schemaDv) =>
+                // use required to fail if available
+                if (required.contains(name)) {
+                    dynamicValueToReflect(schemaDv, defsOut) match {
+                        case Right(fv) => Right(Term[NoBinding, Any, Any](name, fv, doc, Nil))
+                        case Left(e)   => Left(e)
+                    }
+                } else {
+                    dynamicValueToReflect(schemaDv, defsOut) match {
+                        case Right(fv) => Right(Term[NoBinding, Any, Any](name, fv, doc, Nil))
+                        case Left(e)   => Left(e)
+                    }
+                }
+            }
+
+            val firstErr = terms.collectFirst { case Left(e) => e }
+            firstErr match {
+                case Some(e) => Left(e)
+                case None =>
+                    val fields = terms.collect { case Right(t) => t }.toIndexedSeq
+                    Right(Reflect.Record[NoBinding, Any](fields, tn.asInstanceOf[TypeName[Any]], binding.NoBinding(), doc, Nil))
+            }
+        }
+
+        def parseArray(
+            rec: ArraySeq[(String, DynamicValue)],
+            defs: Map[String, DynamicValue]
+        )(implicit config: JsonSchemaConfig): Either[SchemaError, Reflect[NoBinding, Any]] = {
+            get(rec, "items") match {
+                case Some(itemsDv) =>
+                    dynamicValueToReflect(itemsDv, defs) match {
+                        case Right(elem) => Right(Reflect.list[Binding, Any](elem.asInstanceOf[Reflect[Binding, Any]])
+                            .noBinding
+                            .asInstanceOf[Reflect[NoBinding, Any]]
+                        )
+                        case Left(e)     => Left(e)
+                    }
+                case None => Left(SchemaError.invalidType(Nil, "array items missing"))
+            }
+        }
+
+        def parseOneOf(
+            rec: ArraySeq[(String, DynamicValue)],
+            defs: Map[String, DynamicValue]
+        )(implicit config: JsonSchemaConfig): Either[SchemaError, Reflect[NoBinding, Any]] = {
+            get(rec, "oneOf") match {
+                case Some(DynamicValue.Sequence(alts)) =>
+                    val parsed = 
+                        alts.map { case DynamicValue.Record(f) =>
+                            val tag = for {
+                                propsDv <- get(ArraySeq.from(f), "properties")
+                                props   <- fieldsOf(propsDv)
+                                tagRec  <- get(props, "tag").flatMap(fieldsOf)
+                                const    = get(tagRec, "const").flatMap(asString)
+                            } yield const.getOrElse("case")
+                            val valueSchema = for {
+                                propsDv <- get(ArraySeq.from(f), "properties")
+                                props   <- fieldsOf(propsDv)
+                                v       <- get(props, "value")
+                            } yield v
+                            (tag, valueSchema) match {
+                                case (Some(name), Some(vdv)) =>
+                                    dynamicValueToReflect(vdv, defs) match {
+                                        case Right(rv) => Right(Term[NoBinding, Any, Any](name, rv, Doc.Empty, Nil))
+                                        case Left(e)   => Left(e)
+                                    }
+                                case _ => Left(SchemaError.invalidType(Nil, "invalid oneOf alternative"))
+                            }
+                        case _ => Left(SchemaError.invalidType(Nil, "invalid oneOf alternative"))
+                    }
+
+                    val firstErr = parsed.collectFirst { case Left(e) => e }
+                    firstErr match {
+                        case Some(e) => Left(e)
+                        case None =>
+
+                            val tn = get(rec, config.typeNameKey)
+                                .flatMap(asString)
+                                .map(parseTypeName)
+                                .getOrElse(TypeName[Any](Namespace(Nil), "Variant"))
+
+                            val cases = parsed.collect { case Right(t) => t }
+                                .toIndexedSeq
+                                .asInstanceOf[IndexedSeq[Term[NoBinding, Any, _ <: Any]]]
+
+                            Right(Reflect.Variant[NoBinding, Any](cases, tn.asInstanceOf[TypeName[Any]], binding.NoBinding(), Doc.Empty, Nil))
+                    }
+                    
+                case _ => Left(SchemaError.invalidType(Nil, "oneOf missing"))
+            }
+        }
+
+        def parseVariant(
+            rec: ArraySeq[(String, DynamicValue)],
+            defs: Map[String, DynamicValue]
+        )(implicit config: JsonSchemaConfig): Either[SchemaError, Reflect[NoBinding, Any]] = {
+            get(rec, "variant") match {
+                case Some(DynamicValue.Record(all)) =>
+                    val (root, defs2) = stripDefs(ArraySeq.from(all))
+                    val defsOut = defs2 ++ defs
+                    get(root, "$ref").flatMap(asString _).flatMap(path => resolveRef(path, defsOut)) match {
+                        case Some(body) => dynamicValueToReflect(body, defsOut)
+                        case None =>
+                            val tpe = get(root, "type").flatMap(asString _)
+                            tpe match {
+                                case Some("object") => parseObject(root, defsOut)
+                                case Some("array")  => parseArray(root, defsOut)
+                                case Some("oneOf")  => parseOneOf(root, defsOut)
+                                case Some("variant")  => parseVariant(root, defsOut)
+                                case _ =>
+                                    val fmt = get(root, "format").flatMap(asString _)
+                                    Right(parsePrimitive(tpe.getOrElse("string"), fmt))
+                            }
+                    }
+                case _ => Left(SchemaError.invalidType(Nil, "Expected object schema"))
+            }
+        }
+
+        value match {
+            case DynamicValue.Record(all) =>
+                val (root, defs2) = stripDefs(ArraySeq.from(all))
+                val defsOut = defs2 ++ defs
+                get(root, "$ref").flatMap(asString _).flatMap(path => resolveRef(path, defsOut)) match {
+                    case Some(body) => dynamicValueToReflect(body, defsOut)
+                    case None =>
+                        val tpe = get(root, "type").flatMap(asString _)
+                        tpe match {
+                        case Some("object") => parseObject(root, defsOut)
+                        case Some("array")  => parseArray(root, defsOut)
+                        case Some("oneOf")  => parseOneOf(root, defsOut)
+                        case Some("variant")  => parseVariant(root, defsOut)
+                        case _ =>
+                            val fmt = get(root, "format").flatMap(asString _)
+                            Right(parsePrimitive(tpe.getOrElse("string"), fmt))
+                        }
+                }
+            case _ => Left(SchemaError.invalidType(Nil, "Expected object schema"))
+        }
+    }
+
+    
 
   // Helper methods for DynamicValue creation
-  private def dvString(s: String): DynamicValue     = DynamicValue.Primitive(PrimitiveValue.String(s))
-  private def dvInt(i: Int): DynamicValue           = DynamicValue.Primitive(PrimitiveValue.Int(i))
-  private def dvNumber(n: BigDecimal): DynamicValue = DynamicValue.Primitive(PrimitiveValue.BigDecimal(n))
-  private def dvBoolean(b: Boolean): DynamicValue   = DynamicValue.Primitive(PrimitiveValue.Boolean(b))
-
-  private def typeNameToString(tn: TypeName[?]): String = {
-    val ns = tn.namespace.elements.mkString(".")
-    if (ns.isEmpty) tn.name else s"$ns.${tn.name}"
-  }
+    private def dvString(s: String): DynamicValue     = DynamicValue.Primitive(PrimitiveValue.String(s))
+    private def dvInt(i: Int): DynamicValue           = DynamicValue.Primitive(PrimitiveValue.Int(i))
+    private def dvNumber(n: BigDecimal): DynamicValue = DynamicValue.Primitive(PrimitiveValue.BigDecimal(n))
+    private def dvBoolean(b: Boolean): DynamicValue   = DynamicValue.Primitive(PrimitiveValue.Boolean(b))
+    private def dvRecord(fields: ArraySeq[(String, DynamicValue)]): DynamicValue = DynamicValue.Record(fields)
+    private def dvSequence(items: ArraySeq[DynamicValue]): DynamicValue          = DynamicValue.Sequence(items)
+    private def typeNameToString(tn: TypeName[?]): String = {
+        val ns = tn.namespace.elements.mkString(".")
+        if (ns.isEmpty) tn.name else s"$ns.${tn.name}"
+        }
 
   private def extractMinimum(pt: PrimitiveType[?]): Option[BigDecimal] =
     pt.validation match {
@@ -634,7 +890,9 @@ object JsonSchema {
       case _                            => None
     }
 
-  private def schemaToDynamicValue(schema: JsonSchema[?])(implicit config: JsonSchemaConfig): DynamicValue =
+  private def schemaToDynamicValue(
+    schema: JsonSchema[?]
+  )(implicit config: JsonSchemaConfig): DynamicValue =
     // Convert our JsonSchema AST to DynamicValue for backward compatibility
     schema match {
       case `boolean` =>
@@ -675,6 +933,7 @@ object JsonSchema {
           ArraySeq(
             "type"       -> DynamicValue.Primitive(PrimitiveValue.String("object")),
             "properties" -> DynamicValue.Record(ArraySeq.from(props)),
+            "additionalProperties" -> o.additionalProperties.map(dvBoolean).getOrElse(dvBoolean(false)),
             "required"   -> DynamicValue.Sequence(
               ArraySeq.from(o.required.map(s => DynamicValue.Primitive(PrimitiveValue.String(s))))
             )
@@ -682,59 +941,60 @@ object JsonSchema {
         )
       case p: `zio-primitive`[?] =>
         val fields = ArraySeq.newBuilder[(String, DynamicValue)]
-        fields += "type"          -> DynamicValue.Primitive(PrimitiveValue.String(p.jsonType))
-        fields += s"${config.zioNodeTypePrefix}:nodeType"  -> DynamicValue.Primitive(PrimitiveValue.String("primitive"))
-        fields += s"${config.zioNodeTypePrefix}:primitive" -> DynamicValue.Primitive(PrimitiveValue.String(p.primitiveType))
+        fields += "type"              -> DynamicValue.Primitive(PrimitiveValue.String(p.jsonType))
+        fields += config.nodeTypeKey  -> DynamicValue.Primitive(PrimitiveValue.String("primitive"))
+        fields += config.primitiveKey -> DynamicValue.Primitive(PrimitiveValue.String(p.primitiveType))
         p.title.foreach(t => fields += "title" -> DynamicValue.Primitive(PrimitiveValue.String(t)))
         p.description.foreach(d => fields += "description" -> DynamicValue.Primitive(PrimitiveValue.String(d)))
         DynamicValue.Record(fields.result())
+
       case r: `zio-record`[?] =>
-        val props = r.fields.map { case (name, schema) =>
-          name -> schemaToDynamicValue(schema)
-        }
-        DynamicValue.Record(
-          ArraySeq(
-            "type"         -> DynamicValue.Primitive(PrimitiveValue.String("object")),
-            s"${config.zioNodeTypePrefix}:nodeType" -> DynamicValue.Primitive(PrimitiveValue.String("record")),
-            s"${config.zioNodeTypePrefix}:typeName" -> DynamicValue.Primitive(PrimitiveValue.String(r.typeName)),
-            "properties"   -> DynamicValue.Record(ArraySeq.from(props)),
-            "required"     -> DynamicValue.Sequence(
-              ArraySeq.from(r.required.map(s => DynamicValue.Primitive(PrimitiveValue.String(s))))
-            )
-          )
-        )
+        val props = r.fields.map { case (name, schema) => name -> schemaToDynamicValue(schema) }
+          val fields = ArraySeq.newBuilder[(String, DynamicValue)]
+          fields += "type"             -> dvString("object")
+          fields += config.nodeTypeKey  -> dvString("record")
+          fields += config.typeNameKey  -> dvString(typeNameToString(r.typeName))
+          fields += "properties"       -> dvRecord(ArraySeq.from(props))
+          fields += "required"         -> dvSequence(ArraySeq.from(
+            r.required.map(s => DynamicValue.Primitive(PrimitiveValue.String(s)))
+          ))
+          r.description.foreach(d => fields += "description" -> dvString(d))
+          r.title.foreach(t => fields += "title" -> dvString(t))
+          openRecordFlag(r.typeName).foreach(b => fields += "additionalProperties" -> dvBoolean(b))
+          DynamicValue.Record(fields.result())
+        
       case v: `zio-variant`[?] =>
         val oneOf = v.cases.map { case (name, schema) =>
           DynamicValue.Record(
             ArraySeq(
-              "type"       -> DynamicValue.Primitive(PrimitiveValue.String("object")),
-              "properties" -> DynamicValue.Record(
+              "type"       -> dvString("object"),
+              "properties" -> dvRecord(
                 ArraySeq(
-                  "tag" -> DynamicValue.Record(
-                    ArraySeq("const" -> DynamicValue.Primitive(PrimitiveValue.String(name)))
+                  "tag" -> dvRecord(
+                    ArraySeq("const" -> dvString(name))
                   ),
                   "value" -> schemaToDynamicValue(schema)
                 )
               ),
-              "required" -> DynamicValue.Sequence(
+              "required" -> dvSequence(
                 ArraySeq(
-                  DynamicValue.Primitive(PrimitiveValue.String("tag")),
-                  DynamicValue.Primitive(PrimitiveValue.String("value"))
+                  dvString("tag"),
+                  dvString("value")
                 )
               )
             )
           )
         }.toSeq
-        DynamicValue.Record(
+        dvRecord(
           ArraySeq(
-            "oneOf"        -> DynamicValue.Sequence(ArraySeq.from(oneOf)),
-            s"${config.zioNodeTypePrefix}:nodeType" -> DynamicValue.Primitive(PrimitiveValue.String("variant")),
-            s"${config.zioNodeTypePrefix}:typeName" -> DynamicValue.Primitive(PrimitiveValue.String(v.typeName))
+            "oneOf"            -> dvSequence(ArraySeq.from(oneOf)),
+            config.nodeTypeKey -> dvString("variant"),
+            config.typeNameKey -> dvString(v.typeName.toString)
           )
         )
       case o: `oneof`[?] =>
         val alternatives = o.alternatives.map(schemaToDynamicValue)
-        DynamicValue.Record(
+        dvRecord(
           ArraySeq(
             "oneOf" -> DynamicValue.Sequence(ArraySeq.from(alternatives))
           )

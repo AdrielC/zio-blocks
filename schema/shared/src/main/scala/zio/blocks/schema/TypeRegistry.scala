@@ -1,6 +1,6 @@
 package zio.blocks.schema
 
-import binding.*
+import zio.blocks.schema.binding._
 import scala.collection.immutable.Map
 
 /**
@@ -95,7 +95,7 @@ object TypeRegistry {
 
     def typeNames: Seq[TypeName[?]] = bindings.values.map(_._1).toSeq
 
-    def clear: Collection = Collection(Map.empty)
+    def clear: Collection = Collection(Map.empty[String, (TypeName[?], Binding[?, ?])])
 
     private def typeNameToKey(typeName: TypeName[?]): String = {
       val namespace = typeName.namespace.elements.mkString(".")
@@ -106,7 +106,7 @@ object TypeRegistry {
   }
 
   object Collection {
-    val empty: Collection = Collection(Map.empty)
+    val empty: Collection = Collection(Map.empty[String, (TypeName[?], Binding[?, ?])])
 
     def apply[A](typeName: TypeName[A], binding: Binding[?, A]): Collection =
       empty.add(typeName, binding)
