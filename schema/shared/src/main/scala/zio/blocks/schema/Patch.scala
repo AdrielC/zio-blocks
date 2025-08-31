@@ -120,14 +120,14 @@ object Patch {
 
   object OptionalOp {
     case class Replace[A](a: A) extends OptionalOp[A]
-    case object Clear       extends OptionalOp[Nothing]
+    case object Clear           extends OptionalOp[Nothing]
   }
 
   sealed trait TraversalOp[A] extends Op[A]
 
   object TraversalOp {
     case class Replace[A](a: A) extends TraversalOp[A]
-    case class Drop() extends TraversalOp[Nothing]
+    case class Drop()           extends TraversalOp[Nothing]
   }
 
   sealed trait Pair[S, A] {
