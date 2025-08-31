@@ -102,7 +102,7 @@ object Patch {
   def replace[S, A <: S](prism: Prism[S, A], a: A)(implicit source: Schema[S]): Patch[S] =
     Patch(Vector(PrismPair(prism, PrismOp.Replace(a))), source)
 
-  sealed trait Op[+A]
+  sealed trait Op[A]
 
   sealed trait LensOp[A] extends Op[A]
 
@@ -120,14 +120,12 @@ object Patch {
 
   object OptionalOp {
     case class Replace[A](a: A) extends OptionalOp[A]
-    case object Clear           extends OptionalOp[Nothing]
   }
 
   sealed trait TraversalOp[A] extends Op[A]
 
   object TraversalOp {
     case class Replace[A](a: A) extends TraversalOp[A]
-    case class Drop()           extends TraversalOp[Nothing]
   }
 
   sealed trait Pair[S, A] {

@@ -235,8 +235,8 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
 object Reflect {
   type Bound[A] = Reflect[Binding, A]
 
-  def toJsonSchema[F[_, _], A](r: Reflect[F, A]): DynamicValue = r match {
-    case p: Primitive[?, ?] =>
+  def toJsonSchema[F[_, _], A](r: Reflect[F, A]): DynamicValue = (r: Any) match {
+    case p: Primitive[_, _] =>
       val prim = p.asInstanceOf[Primitive[F, Any]]
       DynamicValue.Record(
         ArraySeq(
@@ -248,7 +248,7 @@ object Reflect {
           "zio:modifiers" -> modifiersToDynamic(prim.modifiers)
         )
       )
-    case r0: Record[?, ?] =>
+    case r0: Record[_, _] =>
       val rec   = r0.asInstanceOf[Record[F, Any]]
       val props = rec.fields.map { f =>
         f.name -> f.value.toJsonSchema
@@ -275,7 +275,7 @@ object Reflect {
           "zio:modifiers" -> modifiersToDynamic(rec.modifiers)
         )
       )
-    case v0: Variant[?, ?] =>
+    case v0: Variant[_, _] =>
       val v     = v0.asInstanceOf[Variant[F, Any]]
       val oneOf = v.cases.map { c =>
         DynamicValue.Record(
@@ -311,7 +311,7 @@ object Reflect {
           "zio:modifiers" -> modifiersToDynamic(v.modifiers)
         )
       )
-    case s0: Sequence[?, ?, ?] =>
+    case s0: Sequence[_, _, _] =>
       val s = s0.asInstanceOf[Sequence[F, Any, List]]
       DynamicValue.Record(
         ArraySeq(
@@ -323,7 +323,7 @@ object Reflect {
           "zio:modifiers" -> modifiersToDynamic(s.modifiers)
         )
       )
-    case m0: Map[?, ?, ?, ?] =>
+    case m0: Map[_, _, _, _] =>
       val m = m0.asInstanceOf[Map[F, Any, Any, scala.collection.immutable.Map]]
       DynamicValue.Record(
         ArraySeq(
@@ -336,7 +336,7 @@ object Reflect {
           "zio:modifiers"        -> modifiersToDynamic(m.modifiers)
         )
       )
-    case d0: Dynamic[?] =>
+    case d0: Dynamic[_] =>
       val d = d0.asInstanceOf[Dynamic[F]]
       DynamicValue.Record(
         ArraySeq(
@@ -346,7 +346,7 @@ object Reflect {
           "zio:modifiers" -> modifiersToDynamic(d.modifiers)
         )
       )
-    case w0: Wrapper[?, ?, ?] =>
+    case w0: Wrapper[_, _, _] =>
       val w = w0.asInstanceOf[Wrapper[F, Any, Any]]
       DynamicValue.Record(
         ArraySeq(
@@ -357,7 +357,7 @@ object Reflect {
           "zio:modifiers" -> modifiersToDynamic(w.modifiers)
         )
       )
-    case d: Deferred[?, ?] => toJsonSchema(d.value)
+    case d: Deferred[_, _] => toJsonSchema(d.value)
   }
 
   def fromJsonSchema(value: DynamicValue): Either[SchemaError, Reflect[NoBinding, Any]] = value match {
@@ -544,7 +544,7 @@ object Reflect {
       case Modifier.config(k, v) =>
         DynamicValue.Record(ArraySeq("type" -> dvString("config"), "key" -> dvString(k), "value" -> dvString(v)))
       case _: Modifier.transient => DynamicValue.Record(ArraySeq("type" -> dvString("transient")))
-      case _                     => DynamicValue.Record(ArraySeq("type" -> dvString("unknown")))
+      case null                  => DynamicValue.Record(ArraySeq("type" -> dvString("unknown")))
     }
     DynamicValue.Sequence(ArraySeq.from(elems))
   }

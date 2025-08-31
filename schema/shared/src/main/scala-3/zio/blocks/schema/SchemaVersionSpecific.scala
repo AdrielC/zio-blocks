@@ -587,7 +587,7 @@ private object SchemaVersionSpecific {
     }
 
     case class GenericTupleInfo[T: Type](tpe: TypeRepr) extends TypeInfo {
-      val (fieldInfos: List[FieldInfo], usedRegisters: Expr[RegisterOffset]) = {
+      val (fieldInfos: List[FieldInfo], _usedRegisters: Expr[RegisterOffset]) = {
         val noSymbol      = Symbol.noSymbol
         var usedRegisters = RegisterOffset.Zero
         (
@@ -602,6 +602,8 @@ private object SchemaVersionSpecific {
           Expr(usedRegisters)
         )
       }
+
+      def usedRegisters: Expr[RegisterOffset] = _usedRegisters
 
       def fields[S: Type](
         nameOverrides: List[String] = Nil
