@@ -1675,7 +1675,6 @@ object Reflect {
     }
   }
 
-
   def toJsonSchema[F[_, _], A](r: Reflect[F, A]): DynamicValue = (r: Any) match {
     case p: Primitive[_, _] =>
       val prim = p.asInstanceOf[Primitive[F, Any]]
