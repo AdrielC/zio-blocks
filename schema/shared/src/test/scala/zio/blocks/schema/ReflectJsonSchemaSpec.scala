@@ -1,6 +1,7 @@
 package zio.blocks.schema
 
 import zio.blocks.schema.binding.{Binding, NoBinding}
+import zio.blocks.schema.json.JsonSchema
 import zio.test._
 
 object ReflectJsonSchemaSpec extends ZIOSpecDefault {
@@ -30,7 +31,7 @@ object ReflectJsonSchemaSpec extends ZIOSpecDefault {
 
   private def roundTrip[A](schema: Reflect[NoBinding, A]) = {
     val json    = schema.toJsonSchema.toJson
-    val decoded = Reflect.fromJsonSchema(DynamicValue.fromJson(json)).map(_.asInstanceOf[Reflect[NoBinding, A]])
+    val decoded = JsonSchema.fromJsonSchema(DynamicValue.fromJson(json))
     assertTrue(decoded == Right(schema))
   }
 
