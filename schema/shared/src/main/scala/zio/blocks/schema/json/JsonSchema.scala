@@ -477,6 +477,54 @@ object JsonSchema {
     ctx: GenCtx
   ): DynamicValue = {
     reflect match {
+
+      case reflect @ zio.blocks.schema.Reflect.Map(_, _, _, _, _, _) =>
+        val map = reflect.asMap.get
+        val key = defKey(map.typeName)
+        if (ctx.memo.contains(key)) ctx.memo(key)
+        else if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
+        else {
+          ctx.visiting += key
+          val fields = ArraySeq.newBuilder[(String, DynamicValue)]
+          fields += "type"                                  -> dvString("object")
+          fields += "additionalProperties"                  -> reflectToJsonSchemaDynamicWithCtx(map.value, config, ctx)
+          if (map.doc != Doc.Empty) fields += "description" -> dvString(docToString(map.doc))
+          if (config.includeZioExtensions) {
+            fields += config.nodeTypeKey -> dvString("map")
+            fields += config.typeNameKey -> dvString(typeNameToString(map.typeName))
+            fields += config.keyKey      -> reflectToJsonSchemaDynamicWithCtx(map.key, config, ctx)
+          }
+          val body = dvRecord(fields.result())
+          ctx.visiting -= key
+          ctx.defs.put(key, body)
+          val ref = makeRef(key)
+          ctx.memo.put(key, ref)
+          ref
+        }
+
+      case reflect @ zio.blocks.schema.Reflect.Dynamic(_, _, _, _) => {
+        val dyn = reflect.asDynamic.get
+        val key = defKey(dyn.typeName)
+        if (ctx.memo.contains(key)) ctx.memo(key)
+        else if (ctx.defs.contains(key) || ctx.visiting.contains(key)) makeRef(key)
+        else {
+          ctx.visiting += key
+        }
+        val fields = ArraySeq.newBuilder[(String, DynamicValue)]
+        fields += "type"                                  -> dvString("object")
+        if (dyn.doc != Doc.Empty) fields += "description" -> dvString(docToString(dyn.doc))
+        if (config.includeZioExtensions) {
+          fields += config.nodeTypeKey -> dvString("dynamic")
+          fields += config.typeNameKey -> dvString(typeNameToString(dyn.typeName))
+        }
+        val body = dvRecord(fields.result())
+        ctx.visiting -= key
+        ctx.defs.put(key, body)
+        val ref = makeRef(key)
+        ctx.memo.put(key, ref)
+        ref
+      }
+
       case p: Reflect.Primitive[F, A] =>
         val prim = p
         val key  = defKey(prim.typeName)
