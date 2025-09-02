@@ -25,8 +25,8 @@ object TypeRegistry {
   /**
    * Default type registry with bindings for all standard Scala types
    */
-  lazy val default: TypeRegistry = {
-    val registry = Collection.empty
+  lazy val default: TypeRegistry =
+    Collection.empty
       .add(TypeName.unit, Binding.Primitive.unit)
       .add(TypeName.boolean, Binding.Primitive.boolean)
       .add(TypeName.byte, Binding.Primitive.byte)
@@ -57,8 +57,6 @@ object TypeRegistry {
       .add(TypeName.zonedDateTime, Binding.Primitive.zonedDateTime)
       .add(TypeName.currency, Binding.Primitive.currency)
       .add(TypeName.uuid, Binding.Primitive.uuid)
-    registry
-  }
 
   /**
    * Collection-based implementation of TypeRegistry with add/remove methods

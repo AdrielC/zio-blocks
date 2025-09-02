@@ -3,8 +3,7 @@
 
 # Sbt
 target
-project/target
-project/project/target
+**/project/target
 .bsp
 .bloop
 
@@ -24,5 +23,6 @@ TAGS
 # VS Code
 .metals
 .vscode/settings.json
-project/metals.sbt
+.vscode/extensions.json
+**/project/metals.sbt
 .cursor
