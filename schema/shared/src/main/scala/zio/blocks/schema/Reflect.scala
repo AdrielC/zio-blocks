@@ -1,5 +1,7 @@
 package zio.blocks.schema
 
+import zio.blocks.schema.json.JsonSchema
+
 import zio.blocks.schema.binding.RegisterOffset.RegisterOffset
 import zio.blocks.schema.binding.Binding
 import zio.blocks.schema.binding._
@@ -139,6 +141,169 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
   lazy val noBinding: Reflect[NoBinding, A] = transform(DynamicOptic.root, ReflectTransformer.noBinding()).force
 
   def toDynamicValue(value: A)(implicit F: HasBinding[F]): DynamicValue
+
+  def toJsonSchema(implicit config: json.JsonSchemaConfig): DynamicValue =
+    JsonSchema.toJsonSchema(this)
+
+  /**
+   * Rebind this Reflect using a TypeRegistry to create a fully bound Schema.
+   * This allows converting unbound Reflect types back to bound Schema types.
+   */
+  def rebind(typeRegistry: TypeRegistry): Either[RebindError, Reflect.Bound[A]] =
+    rebindWithRegistry(typeRegistry).asInstanceOf[Either[RebindError, Reflect.Bound[A]]]
+
+  private def rebindWithRegistry(typeRegistry: TypeRegistry): Either[RebindError, Reflect[Binding, ?]] = {
+    (this: Any) match {
+      case p0: Reflect.Primitive[?, ?] =>
+        val p = p0.asInstanceOf[Reflect.Primitive[F, A]]
+        typeRegistry.lookup(p.typeName) match {
+          case Some(binding: Binding.Primitive[A]) =>
+            Right(Reflect.Primitive(p.primitiveType, p.typeName, binding, p.doc, p.modifiers))
+          case Some(binding) =>
+            Left(RebindError.IncompatibleBinding(p.typeName, "Binding.Primitive", binding.getClass.getSimpleName))
+          case None =>
+            Left(RebindError.TypeNotFound(p.typeName))
+        }
+      case r0: Reflect.Record[?, ?] =>
+        val r = r0.asInstanceOf[Reflect.Record[F, A]]
+        // Rebind all field types
+        val reboundFields = r.fields.map { field =>
+          field.value.rebindWithRegistry(typeRegistry) match {
+            case Right(reboundValue) =>
+              Right(field.copy(value = reboundValue.asInstanceOf[Reflect[Binding, Any]]))
+            case Left(error) =>
+              Left(RebindError.NestedError(field.value.typeName, error))
+          }
+        }
+
+        // Check if any field rebinding failed
+        val errors = reboundFields.collect { case Left(error) => error }
+        if (errors.nonEmpty) {
+          Left(errors.head) // Return first error
+        } else {
+          val newFields = reboundFields.collect { case Right(field) => field }
+          typeRegistry.lookup(r.typeName) match {
+            case Some(binding: Binding.Record[A]) =>
+              Right(
+                Reflect.Record(
+                  newFields.asInstanceOf[IndexedSeq[Term[Binding, A, ?]]],
+                  r.typeName.asInstanceOf[TypeName[A]],
+                  binding,
+                  r.doc,
+                  r.modifiers
+                )
+              )
+            case Some(binding) =>
+              Left(RebindError.IncompatibleBinding(r.typeName, "Binding.Record", binding.getClass.getSimpleName))
+            case None =>
+              Left(RebindError.TypeNotFound(r.typeName))
+          }
+        }
+      case v0: Reflect.Variant[?, ?] =>
+        val v = v0.asInstanceOf[Reflect.Variant[F, A]]
+        // Rebind all case types
+        val reboundCases = v.cases.map { case_ =>
+          case_.value.rebindWithRegistry(typeRegistry) match {
+            case Right(reboundValue) =>
+              Right(case_.copy(value = reboundValue.asInstanceOf[Reflect[Binding, Any]]))
+            case Left(error) =>
+              Left(RebindError.NestedError(case_.value.typeName, error))
+          }
+        }
+
+        // Check if any case rebinding failed
+        val errors = reboundCases.collect { case Left(error) => error }
+        if (errors.nonEmpty) {
+          Left(errors.head) // Return first error
+        } else {
+          val newCases = reboundCases.collect { case Right(case_) => case_.asInstanceOf[Term[Binding, A, ? <: A]] }
+          typeRegistry.lookup(v.typeName) match {
+            case Some(binding: Binding.Variant[A]) =>
+              Right(Reflect.Variant(newCases, v.typeName, binding, v.doc, v.modifiers))
+            case Some(binding) =>
+              Left(RebindError.IncompatibleBinding(v.typeName, "Binding.Variant", binding.getClass.getSimpleName))
+            case None =>
+              Left(RebindError.TypeNotFound(v.typeName))
+          }
+        }
+      case seq: Reflect.Sequence[F, A, List] @unchecked =>
+        seq.element.rebindWithRegistry(typeRegistry) match {
+          case Right(reboundElement) =>
+            typeRegistry.lookup(seq.typeName) match {
+              case Some(binding) =>
+                Right(
+                  Reflect.Sequence(
+                    reboundElement.asInstanceOf[Reflect[Binding, A]],
+                    seq.typeName,
+                    binding.asInstanceOf[Binding[BindingType.Seq[List], List[A]]],
+                    seq.doc,
+                    seq.modifiers
+                  )
+                )
+              case None =>
+                Left(RebindError.TypeNotFound(seq.typeName))
+            }
+          case Left(error) =>
+            Left(RebindError.NestedError(seq.element.typeName, error))
+        }
+      case map: Reflect.Map[F, Any, Any, Map] @unchecked =>
+        for {
+          reboundKey   <- map.key.rebindWithRegistry(typeRegistry)
+          reboundValue <- map.value.rebindWithRegistry(typeRegistry)
+          binding      <- typeRegistry.lookup(map.typeName) match {
+                       case Some(b) => Right(b)
+                       case None    => Left(RebindError.TypeNotFound(map.typeName))
+                     }
+        } yield Reflect.Map(
+          reboundKey.asInstanceOf[Reflect[Binding, Any]],
+          reboundValue.asInstanceOf[Reflect[Binding, Any]],
+          map.typeName.asInstanceOf[TypeName[Map[Any, Any]]],
+          binding.asInstanceOf[Binding[BindingType.Map[Map], Map[Any, Any]]],
+          map.doc,
+          map.modifiers
+        )
+      case d0: Reflect.Dynamic[?] =>
+        val d = d0.asInstanceOf[Reflect.Dynamic[F]]
+        typeRegistry.lookup(d.typeName) match {
+          case Some(binding) =>
+            binding match {
+              case b: Binding.Dynamic => Right(Reflect.Dynamic(b, d.doc, d.modifiers))
+              case other              =>
+                Left(RebindError.IncompatibleBinding(d.typeName, "Binding.Dynamic", other.getClass.getSimpleName))
+            }
+          case None => Left(RebindError.TypeNotFound(d.typeName))
+        }
+      case w: Reflect.Wrapper[_, _, _] =>
+        val wrap = w.asInstanceOf[Reflect.Wrapper[F, A, Any]]
+        wrap.wrapped.rebindWithRegistry(typeRegistry) match {
+          case Right(reboundWrapped) =>
+            typeRegistry.lookup(wrap.typeName) match {
+              case Some(binding) =>
+                Right(
+                  Reflect.Wrapper(
+                    reboundWrapped.asInstanceOf[Reflect[Binding, Any]],
+                    wrap.typeName,
+                    binding.asInstanceOf[Binding[BindingType.Wrapper[A, Any], A]],
+                    wrap.doc,
+                    wrap.modifiers
+                  )
+                )
+              case None =>
+                Left(RebindError.TypeNotFound(wrap.typeName))
+            }
+          case Left(error) =>
+            Left(RebindError.NestedError(wrap.wrapped.typeName, error))
+        }
+      case d0: Reflect.Deferred[?, ?] =>
+        val d = d0.asInstanceOf[Reflect.Deferred[F, A]]
+        d.value.rebindWithRegistry(typeRegistry) match {
+          case Right(reboundValue) =>
+            Right(Reflect.Deferred(() => reboundValue.asInstanceOf[Reflect[Binding, A]]))
+          case Left(error) =>
+            Left(error)
+        }
+    }
+  }
 
   def transform[G[_, _]](path: DynamicOptic, f: ReflectTransformer[F, G]): Lazy[Reflect[G, A]]
 
@@ -1672,4 +1837,5 @@ object Reflect {
       else values(idx)
     }
   }
+
 }

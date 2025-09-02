@@ -4,6 +4,7 @@ import zio.blocks.schema.binding.Binding
 import zio.blocks.schema.derive.{Deriver, DerivationBuilder}
 import java.util.concurrent.ConcurrentHashMap
 import scala.collection.immutable.ArraySeq
+import zio.blocks.schema.json.JsonSchemaConfig
 
 /**
  * A `Schema` is a data type that contains reified information on the structure
@@ -62,6 +63,8 @@ final case class Schema[A](reflect: Reflect.Bound[A]) {
   def get(dynamic: DynamicOptic): Option[Reflect.Bound[?]] = reflect.get(dynamic)
 
   def toDynamicValue(value: A): DynamicValue = reflect.toDynamicValue(value)
+
+  def toJsonSchema(implicit config: JsonSchemaConfig): DynamicValue = reflect.toJsonSchema(config)
 
   def updated(dynamic: DynamicOptic)(f: Reflect.Updater[Binding]): Option[Schema[A]] =
     reflect.updated(dynamic)(f).map(Schema(_))
