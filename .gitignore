@@ -24,4 +24,6 @@ TAGS
 # VS Code
 .metals
 .vscode/settings.json
-project/metals.sbt
+.vscode/extensions.json
+.cursor/
+**/project/metals.sbt
