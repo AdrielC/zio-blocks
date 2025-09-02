@@ -20,7 +20,22 @@ object ZIOPreludeSupportSpec extends ZIOSpecDefault {
       assert(Planet.mass.replace(value, Kilogram(5.970001e24)))(
         equalTo(new Planet(Name("Earth"), Kilogram(5.970001e24), Meter(6378000.0)))
       ) &&
-      assert(Planet.schema.fromDynamicValue(Planet.schema.toDynamicValue(value)))(isRight(equalTo(value)))
+      assert(Planet.schema.fromDynamicValue(Planet.schema.toDynamicValue(value)))(isRight(equalTo(value))) &&
+      assert(Planet.name.focus.typeName)(
+        equalTo(
+          TypeName[Name](Namespace(Seq("zio", "blocks", "schema"), Seq("ZIOPreludeSupportSpec")), "Name")
+        )
+      ) &&
+      assert(Planet.mass.focus.typeName)(
+        equalTo(
+          TypeName[Kilogram](Namespace(Seq("zio", "blocks", "schema"), Seq("ZIOPreludeSupportSpec")), "Kilogram")
+        )
+      ) &&
+      assert(Planet.radius.focus.typeName)(
+        equalTo(
+          TypeName[Meter](Namespace(Seq("zio", "blocks", "schema"), Seq("ZIOPreludeSupportSpec")), "Meter")
+        )
+      )
     }
   )
 
@@ -29,19 +44,14 @@ object ZIOPreludeSupportSpec extends ZIOSpecDefault {
   object Name extends Newtype[String] {
     override def assertion = assert(!zio.prelude.Assertion.isEmptyString)
 
-    implicit val schema: Schema[Name] = Schema(
-      reflect = Reflect.Wrapper(
-        wrapped = Schema[String].reflect,
-        typeName = TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("ZIOPreludeSupportSpec")), "Name"),
-        wrapperBinding = Binding.Wrapper[Name, String](
-          s => {
-            if (s.length > 0) new Right(s.asInstanceOf[Name])
-            else new Left("String must not be empty")
-          },
-          _.asInstanceOf[String]
-        )
+    implicit val schema: Schema[Name] = Schema.derived
+      .wrap[String](
+        s => {
+          if (s.length > 0) new Right(s.asInstanceOf[Name])
+          else new Left("String must not be empty")
+        },
+        _.asInstanceOf[String]
       )
-    )
   }
 
   type Kilogram = Kilogram.Type

@@ -67,10 +67,10 @@ final case class Schema[A](reflect: Reflect.Bound[A]) {
   def toJsonSchema(implicit config: JsonSchemaConfig): DynamicValue = reflect.toJsonSchema(config)
 
   def updated(dynamic: DynamicOptic)(f: Reflect.Updater[Binding]): Option[Schema[A]] =
-    reflect.updated(dynamic)(f).map(Schema(_))
+    reflect.updated(dynamic)(f).map(x => new Schema(x))
 
   def updated[B](optic: Optic[A, B])(f: Reflect.Bound[B] => Reflect.Bound[B]): Option[Schema[A]] =
-    reflect.updated(optic)(f).map(Schema(_))
+    reflect.updated(optic)(f).map(x => new Schema(x))
 
   def @@[Min >: A, Max <: A](aspect: SchemaAspect[Min, Max, Binding]): Schema[A] = new Schema(reflect.aspect(aspect))
 
@@ -79,6 +79,18 @@ final case class Schema[A](reflect: Reflect.Bound[A]) {
   def modifier(modifier: reflect.ModifierType): Schema[A] = new Schema(reflect.modifier(modifier))
 
   def modifiers(modifiers: Iterable[reflect.ModifierType]): Schema[A] = new Schema(reflect.modifiers(modifiers))
+
+  def wrap[B: Schema](wrap: B => Either[String, A], unwrap: A => B): Schema[A] = new Schema(
+    new Reflect.Wrapper[Binding, A, B](Schema[B].reflect, reflect.typeName, new Binding.Wrapper(wrap, unwrap))
+  )
+
+  def wrapTotal[B: Schema](wrap: B => A, unwrap: A => B): Schema[A] = new Schema(
+    new Reflect.Wrapper[Binding, A, B](
+      Schema[B].reflect,
+      reflect.typeName,
+      new Binding.Wrapper(x => new Right(wrap(x)), unwrap)
+    )
+  )
 }
 
 object Schema extends SchemaVersionSpecific {
