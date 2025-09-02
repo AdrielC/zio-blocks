@@ -26,4 +26,3 @@ TAGS
 .vscode/extensions.json
 .cursor/
 **/project/metals.sbt
-.cursor
