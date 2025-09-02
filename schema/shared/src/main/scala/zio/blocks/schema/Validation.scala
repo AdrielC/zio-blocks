@@ -34,6 +34,6 @@ object Validation {
 
     case class Length(min: Option[scala.Int], max: Option[scala.Int]) extends String
 
-    case class Pattern(regex: String) extends String
+    case class Pattern(regex: scala.Predef.String) extends String
   }
 }

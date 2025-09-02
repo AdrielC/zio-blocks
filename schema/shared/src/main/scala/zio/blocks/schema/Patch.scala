@@ -102,7 +102,7 @@ object Patch {
   def replace[S, A <: S](prism: Prism[S, A], a: A)(implicit source: Schema[S]): Patch[S] =
     Patch(Vector(PrismPair(prism, PrismOp.Replace(a))), source)
 
-  sealed trait Op[+A]
+  sealed trait Op[A]
 
   sealed trait LensOp[A] extends Op[A]
 
