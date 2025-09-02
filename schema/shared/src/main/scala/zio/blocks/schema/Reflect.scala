@@ -267,7 +267,7 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
         typeRegistry.lookup(d.typeName) match {
           case Some(binding) =>
             binding match {
-              case b: Binding.Dynamic => Right(Reflect.Dynamic(b, d.doc, d.modifiers))
+              case b: Binding.Dynamic => Right(Reflect.Dynamic(b, d.typeName, d.doc, d.modifiers))
               case other              =>
                 Left(RebindError.IncompatibleBinding(d.typeName, "Binding.Dynamic", other.getClass.getSimpleName))
             }
