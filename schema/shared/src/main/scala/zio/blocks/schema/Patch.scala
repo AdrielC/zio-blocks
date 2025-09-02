@@ -120,7 +120,6 @@ object Patch {
 
   object OptionalOp {
     case class Replace[A](a: A) extends OptionalOp[A]
-    case object Clear           extends OptionalOp[Nothing]
   }
 
   sealed trait TraversalOp[A] extends Op[A]
