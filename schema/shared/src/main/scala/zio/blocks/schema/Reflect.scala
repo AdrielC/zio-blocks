@@ -142,7 +142,7 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
 
   def toDynamicValue(value: A)(implicit F: HasBinding[F]): DynamicValue
 
-  def toJsonSchema(implicit config: json.JsonSchemaConfig): DynamicValue = 
+  def toJsonSchema(implicit config: json.JsonSchemaConfig): DynamicValue =
     JsonSchema.toJsonSchema(this)
 
   /**
@@ -251,9 +251,9 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
           reboundKey   <- map.key.rebindWithRegistry(typeRegistry)
           reboundValue <- map.value.rebindWithRegistry(typeRegistry)
           binding      <- typeRegistry.lookup(map.typeName) match {
-            case Some(b) => Right(b)
-            case None    => Left(RebindError.TypeNotFound(map.typeName))
-          }
+                       case Some(b) => Right(b)
+                       case None    => Left(RebindError.TypeNotFound(map.typeName))
+                     }
         } yield Reflect.Map(
           reboundKey.asInstanceOf[Reflect[Binding, Any]],
           reboundValue.asInstanceOf[Reflect[Binding, Any]],
