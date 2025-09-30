@@ -1,5 +1,6 @@
 package zio.blocks.schema
 
+import zio.Chunk
 import zio.blocks.schema.DynamicOptic.Node.{Elements, MapValues}
 import zio.blocks.schema.Reflect.Primitive
 import zio.blocks.schema.SchemaError.{InvalidType, MissingField}
@@ -40,18 +41,11 @@ object SchemaSpec extends ZIOSpecDefault {
       },
       test("appends primitive modifiers") {
         val schema1 = Schema[Int]
-        val schema2 = schema1.modifier(Modifier.config("key1", "value1").asInstanceOf[schema1.reflect.ModifierType])
+        val schema2 = schema1.modifier(Modifier.config("key1", "value1"))
         assert(schema2.reflect.modifiers: Any)(equalTo(Seq(Modifier.config("key1", "value1")))) &&
         assert(
-          schema2
-            .modifiers(Seq(Modifier.config("key2", "value2").asInstanceOf[schema2.reflect.ModifierType]))
-            .reflect
-            .modifiers: Any
-        )(
-          equalTo(
-            Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))
-          )
-        )
+          schema2.modifiers(Seq(Modifier.config("key2", "value2"))).reflect.modifiers
+        )(equalTo(Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))))
       },
       test("has consistent toDynamicValue and fromDynamicValue") {
         assert(Schema[Byte].fromDynamicValue(Schema[Byte].toDynamicValue(1)))(isRight(equalTo(1: Byte))) &&
@@ -102,18 +96,11 @@ object SchemaSpec extends ZIOSpecDefault {
       },
       test("appends record modifiers") {
         val schema1 = Record.schema
-        val schema2 = schema1.modifier(Modifier.config("key1", "value1").asInstanceOf[schema1.reflect.ModifierType])
+        val schema2 = schema1.modifier(Modifier.config("key1", "value1"))
         assert(schema2.reflect.modifiers: Any)(equalTo(Seq(Modifier.config("key1", "value1")))) &&
         assert(
-          schema2
-            .modifiers(Seq(Modifier.config("key2", "value2").asInstanceOf[schema2.reflect.ModifierType]))
-            .reflect
-            .modifiers: Any
-        )(
-          equalTo(
-            Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))
-          )
-        )
+          schema2.modifiers(Seq(Modifier.config("key2", "value2"))).reflect.modifiers
+        )(equalTo(Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))))
       },
       test("has consistent toDynamicValue and fromDynamicValue") {
         assert(Box1.schema.fromDynamicValue(Box1.schema.toDynamicValue(Box1(4L))))(isRight(equalTo(Box1(4L)))) &&
@@ -678,6 +665,22 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(Record24.s24.get(value))(equalTo("24")) &&
         assert(Record24.schema.fromDynamicValue(Record24.schema.toDynamicValue(value)))(isRight(equalTo(value)))
       },
+      test("derives schema for record with fields that have 3rd party collection type") {
+        implicit def chunkSchema[V](implicit ev: Schema[V]): Schema[Chunk[V]] =
+          new Schema(
+            new Reflect.Wrapper[Binding, Chunk[V], List[V]](
+              Schema.list[V].reflect,
+              TypeName(Namespace("zio" :: Nil, Nil), "Chunk"),
+              new Binding.Wrapper(x => new Right(Chunk.fromIterable(x)), _.toList)
+            )
+          )
+
+        case class Test(chunk: Chunk[Int])
+
+        val schema = Schema.derived[Test]
+        val value  = Test(Chunk(1, 2, 3))
+        assert(schema.fromDynamicValue(schema.toDynamicValue(value)))(isRight(equalTo(value)))
+      },
       test("encodes values using provided formats and outputs") {
         assert(encodeToString { out =>
           Schema[Record].encode(ToStringFormat)(out)(Record(1: Byte, 2))
@@ -707,7 +710,7 @@ object SchemaSpec extends ZIOSpecDefault {
              object GenDoc {
                implicit def schema[A, B : Schema, C : Schema]: Schema[GenDoc[A, B, C]] = Schema.derived
              }"""
-        }.map(assert(_)(isLeft(containsString("Unsupported field type 'A'."))))
+        }.map(assert(_)(isLeft(containsString("Cannot derive schema for 'A'."))))
       },
       test("doesn't generate schema for multi list constructor with default values in non-first list of arguments") {
         typeCheck {
@@ -719,8 +722,28 @@ object SchemaSpec extends ZIOSpecDefault {
             isLeft(
               containsString(
                 "missing argument list for method <init>$default$2 in object MultiListWithDefaults"
-              ) ||                                                                                        // Scala 2
-                containsString("Cannot find default value for 'val l' in class 'MultiListWithDefaults'.") // Scala 3
+              ) || // Scala 2
+                containsString(
+                  "Default values of non-first parameter lists are not supported for 'val l' in class 'MultiListWithDefaults'."
+                ) // Scala 3
+            )
+          )
+        )
+      },
+      test("doesn't generate schema for generic constructor with default values of wrong type") {
+        typeCheck {
+          """case class PolymorphicDefaults[A, B](i: A = 1, cs: List[B] = Nil)
+
+             Schema.derived[PolymorphicDefaults[String, Int]]"""
+        }.map(
+          assert(_)(
+            isLeft(
+              containsString(
+                "polymorphic expression cannot be instantiated to expected type"
+              ) || // Scala 2
+                containsString(
+                  "Type Mismatch"
+                ) // Scala 3
             )
           )
         )
@@ -770,18 +793,11 @@ object SchemaSpec extends ZIOSpecDefault {
       },
       test("appends variant modifiers") {
         val schema1 = Variant.schema
-        val schema2 = schema1.modifier(Modifier.config("key1", "value1").asInstanceOf[schema1.reflect.ModifierType])
+        val schema2 = schema1.modifier(Modifier.config("key1", "value1"))
         assert(schema2.reflect.modifiers: Any)(equalTo(Seq(Modifier.config("key1", "value1")))) &&
         assert(
-          schema2
-            .modifiers(Seq(Modifier.config("key2", "value2").asInstanceOf[schema2.reflect.ModifierType]))
-            .reflect
-            .modifiers: Any
-        )(
-          equalTo(
-            Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))
-          )
-        )
+          schema2.modifiers(Seq(Modifier.config("key2", "value2"))).reflect.modifiers
+        )(equalTo(Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))))
       },
       test("has consistent toDynamicValue and fromDynamicValue") {
         assert(Variant.schema.fromDynamicValue(Variant.schema.toDynamicValue(Case1('1'))))(
@@ -827,11 +843,11 @@ object SchemaSpec extends ZIOSpecDefault {
 
         @Modifier.config("case-key-1", "case-value-1")
         @Modifier.config("case-key-1", "case-value-2")
-        case class `Case-1`(d: Double) extends Variant1
+        case class `Case-1`(@Modifier.config("field-key-1", "field-value-1") d: Double) extends Variant1
 
         @Modifier.config("case-key-2", "case-value-1")
         @Modifier.config("case-key-2", "case-value-2")
-        case class `Case-2`(f: Float) extends Variant1
+        case class `Case-2`(@Modifier.config("field-key-2", "field-value-2") f: Float) extends Variant1
 
         @Modifier.config("case-key-3", "case-value-1")
         @Modifier.config("case-key-3", "case-value-2")
@@ -853,9 +869,19 @@ object SchemaSpec extends ZIOSpecDefault {
             equalTo(Seq(Modifier.config("case-key-1", "case-value-1"), Modifier.config("case-key-1", "case-value-2")))
           )
         ) &&
+        assert(record1.map(_.fields.flatMap(_.modifiers)): Option[Any])(
+          isSome(
+            equalTo(Seq(Modifier.config("field-key-1", "field-value-1")))
+          )
+        ) &&
         assert(record2.map(_.modifiers))(
           isSome(
             equalTo(Seq(Modifier.config("case-key-2", "case-value-1"), Modifier.config("case-key-2", "case-value-2")))
+          )
+        ) &&
+        assert(record2.map(_.fields.flatMap(_.modifiers)): Option[Any])(
+          isSome(
+            equalTo(Seq(Modifier.config("field-key-2", "field-value-2")))
           )
         ) &&
         assert(record3.map(_.modifiers))(
@@ -948,17 +974,30 @@ object SchemaSpec extends ZIOSpecDefault {
         )
       },
       test("derives schema for a variant with cases on different levels using a macro call") {
-        val schema: Schema[Level1.MultiLevel] = Schema.derived
-        val variant                           = schema.reflect.asVariant
-        assert(schema.fromDynamicValue(schema.toDynamicValue(Case)))(isRight(equalTo(Case))) &&
-        assert(schema.fromDynamicValue(schema.toDynamicValue(Level1.Case)))(isRight(equalTo(Level1.Case))) &&
-        assert(schema.fromDynamicValue(schema.toDynamicValue(Level1.Level2.Case)))(
-          isRight(equalTo(Level1.Level2.Case))
+        object Level1_MultiLevel extends CompanionOptics[Level1.MultiLevel] {
+          implicit val schema: Schema[Level1.MultiLevel]        = Schema.derived
+          val c: Prism[Level1.MultiLevel, SchemaSpec.Case.type] = $(_.when[SchemaSpec.Case.type])
+          val l1_c: Prism[Level1.MultiLevel, Level1.Case.type]  = $(_.when[Level1.Case.type])
+        }
+
+        val schema1  = A.schema
+        val schema2  = Level1_MultiLevel.schema
+        val variant1 = schema1.reflect.asVariant
+        val variant2 = schema2.reflect.asVariant
+        assert(A.a1.getOption(B.A1))(isSome(equalTo(B.A1))) &&
+        assert(A.a2.getOption(B.A2))(isSome(equalTo(B.A2))) &&
+        assert(schema1.fromDynamicValue(schema1.toDynamicValue(B.A1)))(isRight(equalTo(B.A1))) &&
+        assert(schema1.fromDynamicValue(schema1.toDynamicValue(B.A2)))(isRight(equalTo(B.A2))) &&
+        assert(variant1.map(_.cases.map(_.name)))(isSome(equalTo(Vector("A1", "A2")))) &&
+        assert(variant1.map(_.typeName))(
+          isSome(equalTo(TypeName[A](Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec")), "A")))
         ) &&
-        assert(variant.map(_.cases.map(_.name)))(
-          isSome(equalTo(Vector("Level1.Case", "Level1.Level2.Case", "Case")))
-        ) &&
-        assert(variant.map(_.typeName))(
+        assert(Level1_MultiLevel.c.getOption(Case))(isSome(equalTo(Case))) &&
+        assert(Level1_MultiLevel.l1_c.getOption(Level1.Case))(isSome(equalTo(Level1.Case))) &&
+        assert(schema2.fromDynamicValue(schema2.toDynamicValue(Case)))(isRight(equalTo(Case))) &&
+        assert(schema2.fromDynamicValue(schema2.toDynamicValue(Level1.Case)))(isRight(equalTo(Level1.Case))) &&
+        assert(variant2.map(_.cases.map(_.name)))(isSome(equalTo(Vector("Level1.Case", "Case")))) &&
+        assert(variant2.map(_.typeName))(
           isSome(
             equalTo(
               TypeName[Level1.MultiLevel](
@@ -1126,18 +1165,11 @@ object SchemaSpec extends ZIOSpecDefault {
       },
       test("appends sequence modifiers") {
         val schema1 = Schema[List[Int]]
-        val schema2 = schema1.modifier(Modifier.config("key1", "value1").asInstanceOf[schema1.reflect.ModifierType])
+        val schema2 = schema1.modifier(Modifier.config("key1", "value1"))
         assert(schema2.reflect.modifiers: Any)(equalTo(Seq(Modifier.config("key1", "value1")))) &&
         assert(
-          schema2
-            .modifiers(Seq(Modifier.config("key2", "value2").asInstanceOf[schema2.reflect.ModifierType]))
-            .reflect
-            .modifiers: Any
-        )(
-          equalTo(
-            Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))
-          )
-        )
+          schema2.modifiers(Seq(Modifier.config("key2", "value2"))).reflect.modifiers
+        )(equalTo(Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))))
       },
       test("has consistent toDynamicValue and fromDynamicValue") {
         assert(Schema[ArraySeq[Int]].fromDynamicValue(Schema[ArraySeq[Int]].toDynamicValue(ArraySeq(1, 2, 3))))(
@@ -1333,18 +1365,11 @@ object SchemaSpec extends ZIOSpecDefault {
       },
       test("appends map modifiers") {
         val schema1 = Schema[Map[Int, Long]]
-        val schema2 = schema1.modifier(Modifier.config("key1", "value1").asInstanceOf[schema1.reflect.ModifierType])
+        val schema2 = schema1.modifier(Modifier.config("key1", "value1"))
         assert(schema2.reflect.modifiers: Any)(equalTo(Seq(Modifier.config("key1", "value1")))) &&
         assert(
-          schema2
-            .modifiers(Seq(Modifier.config("key2", "value2").asInstanceOf[schema2.reflect.ModifierType]))
-            .reflect
-            .modifiers: Any
-        )(
-          equalTo(
-            Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))
-          )
-        )
+          schema2.modifiers(Seq(Modifier.config("key2", "value2"))).reflect.modifiers
+        )(equalTo(Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))))
       },
       test("has consistent toDynamicValue and fromDynamicValue") {
         assert(
@@ -1426,18 +1451,11 @@ object SchemaSpec extends ZIOSpecDefault {
       },
       test("appends dynamic modifiers") {
         val schema1 = Schema[DynamicValue]
-        val schema2 = schema1.modifier(Modifier.config("key1", "value1").asInstanceOf[schema1.reflect.ModifierType])
+        val schema2 = schema1.modifier(Modifier.config("key1", "value1"))
         assert(schema2.reflect.modifiers: Any)(equalTo(Seq(Modifier.config("key1", "value1")))) &&
         assert(
-          schema2
-            .modifiers(Seq(Modifier.config("key2", "value2").asInstanceOf[schema2.reflect.ModifierType]))
-            .reflect
-            .modifiers: Any
-        )(
-          equalTo(
-            Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))
-          )
-        )
+          schema2.modifiers(Seq(Modifier.config("key2", "value2"))).reflect.modifiers
+        )(equalTo(Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))))
       },
       test("has consistent toDynamicValue and fromDynamicValue") {
         val value = DynamicValue.Primitive(PrimitiveValue.Int(1))
@@ -1534,18 +1552,11 @@ object SchemaSpec extends ZIOSpecDefault {
       },
       test("appends deferred modifiers") {
         val schema1 = Schema(Reflect.Deferred[Binding, Record](() => Record.schema.reflect))
-        val schema2 = schema1.modifier(Modifier.config("key1", "value1").asInstanceOf[schema1.reflect.ModifierType])
+        val schema2 = schema1.modifier(Modifier.config("key1", "value1"))
         assert(schema2.reflect.modifiers: Any)(equalTo(Seq(Modifier.config("key1", "value1")))) &&
         assert(
-          schema2
-            .modifiers(Seq(Modifier.config("key2", "value2").asInstanceOf[schema2.reflect.ModifierType]))
-            .reflect
-            .modifiers: Any
-        )(
-          equalTo(
-            Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))
-          )
-        )
+          schema2.modifiers(Seq(Modifier.config("key2", "value2"))).reflect.modifiers
+        )(equalTo(Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))))
       },
       test("has consistent toDynamicValue and fromDynamicValue") {
         val deferred1 = Reflect.Deferred[Binding, Record](() => Record.schema.reflect)
@@ -1568,21 +1579,21 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(encodeToString(out => Schema(deferred1).encode(ToStringFormat)(out)(1)))(equalTo("1"))
       },
       test("helps to avoid stack overflow for schemas of recursive data structures") {
-        case class Recursive(a: Int, b: Option[Recursive])
+        case class Recursive(a: Int, @Modifier.config("field-key", "field-value") b: Option[Recursive] = None)
 
         def recursiveSchema: Schema[Recursive] = {
           implicit lazy val schema: Schema[Recursive] = Schema.derived[Recursive]
           schema
         }
 
-        val recursive   = Recursive(1, Some(Recursive(2, Some(Recursive(3, None)))))
+        val recursive   = Recursive(1, Some(Recursive(2, Some(Recursive(3)))))
         val schema1     = recursiveSchema
         val schema2     = recursiveSchema
         val fieldValue1 = schema1.reflect.asRecord.get.fields(0).value
         val fieldValue2 = schema1.reflect.asRecord.get.fields(1).value
         val caseValue1  = fieldValue2.asVariant.get.cases(0).value
         val caseValue2  = fieldValue2.asVariant.get.cases(1).value
-        val fieldValue3 = caseValue1.asRecord.get.fields(0).value
+        val fieldValue3 = caseValue2.asRecord.get.fields(0).value
         assert(schema1.fromDynamicValue(schema1.toDynamicValue(recursive)))(isRight(equalTo(recursive))) &&
         assert(schema1 eq schema2)(equalTo(false)) &&
         assert(schema1.reflect)(equalTo(schema2.reflect)) &&
@@ -1592,6 +1603,12 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(schema1.reflect.noBinding: Any)(equalTo(schema1.reflect)) &&
         assert(fieldValue1.isInstanceOf[Reflect.Deferred[Binding, ?]])(equalTo(false)) &&
         assert(fieldValue2.isInstanceOf[Reflect.Deferred[Binding, ?]])(equalTo(true)) &&
+        assert(fieldValue2.getDefaultValue: Option[Any])(isSome(equalTo(None))) &&
+        assert(schema1.reflect.asRecord.get.fields(1).modifiers: Any)(
+          equalTo(
+            Seq(Modifier.config("field-key", "field-value"))
+          )
+        ) &&
         assert(caseValue1.isInstanceOf[Reflect.Deferred[Binding, ?]])(equalTo(false)) &&
         assert(caseValue2.isInstanceOf[Reflect.Deferred[Binding, ?]])(equalTo(false)) &&
         assert(fieldValue3.isInstanceOf[Reflect.Deferred[Binding, ?]])(equalTo(false)) &&
@@ -1648,18 +1665,11 @@ object SchemaSpec extends ZIOSpecDefault {
       },
       test("appends wrapped modifiers") {
         val schema1 = PosInt.schema
-        val schema2 = schema1.modifier(Modifier.config("key1", "value1").asInstanceOf[schema1.reflect.ModifierType])
+        val schema2 = schema1.modifier(Modifier.config("key1", "value1"))
         assert(schema2.reflect.modifiers: Any)(equalTo(Seq(Modifier.config("key1", "value1")))) &&
         assert(
-          schema2
-            .modifiers(Seq(Modifier.config("key2", "value2").asInstanceOf[schema2.reflect.ModifierType]))
-            .reflect
-            .modifiers: Any
-        )(
-          equalTo(
-            Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))
-          )
-        )
+          schema2.modifiers(Seq(Modifier.config("key2", "value2"))).reflect.modifiers
+        )(equalTo(Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))))
       },
       test("has consistent toDynamicValue and fromDynamicValue") {
         val value = PosInt.applyUnsafe(1)
@@ -1705,6 +1715,36 @@ object SchemaSpec extends ZIOSpecDefault {
       typeCheck {
         "Schema.derived[java.util.Date]"
       }.map(assert(_)(isLeft(containsString("Cannot derive schema for 'java.util.Date'."))))
+    },
+    test("doesn't generate schema for case classes with non public parameters of the primary constructor") {
+      typeCheck {
+        """case class MultiListOfArgsWithNonPublicParam(i: Int)(l: Long)
+
+           Schema.derived[MultiListOfArgsWithNonPublicParam]"""
+      }.map(
+        assert(_)(
+          isLeft(
+            containsString(
+              "Field or getter 'l' of 'MultiListOfArgsWithNonPublicParam' should be defined as 'val' or 'var' in the primary constructor."
+            )
+          )
+        )
+      )
+    },
+    test("doesn't generate schema for classes with parameters in a primary constructor that have no accessor for read") {
+      typeCheck {
+        """class ParamHasNoAccessor(val i: Int, a: String)
+
+           Schema.derived[ParamHasNoAccessor]"""
+      }.map(
+        assert(_)(
+          isLeft(
+            containsString(
+              "Field or getter 'a' of 'ParamHasNoAccessor' should be defined as 'val' or 'var' in the primary constructor."
+            )
+          )
+        )
+      )
     }
   )
 
@@ -1732,14 +1772,24 @@ object SchemaSpec extends ZIOSpecDefault {
 
   case class Case2(s: String) extends Variant
 
+  sealed trait A
+
+  object B {
+    case object A1 extends A
+
+    case object A2 extends A
+  }
+
+  object A extends CompanionOptics[A] {
+    implicit val schema: Schema[A] = Schema.derived
+    val a1: Prism[A, B.A1.type]    = $(_.when[B.A1.type])
+    val a2: Prism[A, B.A2.type]    = $(_.when[B.A2.type])
+  }
+
   object Level1 {
     sealed trait MultiLevel
 
     case object Case extends MultiLevel
-
-    object Level2 {
-      case object Case extends MultiLevel
-    }
   }
 
   case object Case extends Level1.MultiLevel
@@ -1793,7 +1843,7 @@ object SchemaSpec extends ZIOSpecDefault {
             typeName: TypeName[A],
             binding: Binding[BindingType.Primitive, A],
             doc: Doc,
-            modifiers: Seq[Modifier.Primitive]
+            modifiers: Seq[Modifier.Reflect]
           ): Lazy[TextCodec[A]] =
             Lazy(new TextCodec[A] {
               override def encode(value: A, output: CharBuffer): Unit = output.append(value.toString)
@@ -1806,7 +1856,7 @@ object SchemaSpec extends ZIOSpecDefault {
             typeName: TypeName[A],
             binding: Binding[BindingType.Record, A],
             doc: Doc,
-            modifiers: Seq[Modifier.Record]
+            modifiers: Seq[Modifier.Reflect]
           )(implicit F: HasBinding[F], D: HasInstance[F]): Lazy[TextCodec[A]] =
             Lazy(new TextCodec[A] {
               override def encode(value: A, output: CharBuffer): Unit = output.append(value.toString)
@@ -1819,7 +1869,7 @@ object SchemaSpec extends ZIOSpecDefault {
             typeName: TypeName[A],
             binding: Binding[BindingType.Variant, A],
             doc: Doc,
-            modifiers: Seq[Modifier.Variant]
+            modifiers: Seq[Modifier.Reflect]
           )(implicit F: HasBinding[F], D: HasInstance[F]): Lazy[TextCodec[A]] =
             Lazy(new TextCodec[A] {
               override def encode(value: A, output: CharBuffer): Unit = output.append(value.toString)
@@ -1832,7 +1882,7 @@ object SchemaSpec extends ZIOSpecDefault {
             typeName: TypeName[C[A]],
             binding: Binding[BindingType.Seq[C], C[A]],
             doc: Doc,
-            modifiers: Seq[Modifier.Seq]
+            modifiers: Seq[Modifier.Reflect]
           )(implicit F: HasBinding[F], D: HasInstance[F]): Lazy[TextCodec[C[A]]] =
             Lazy(new TextCodec[C[A]] {
               override def encode(value: C[A], output: CharBuffer): Unit = output.append(value.toString)
@@ -1846,7 +1896,7 @@ object SchemaSpec extends ZIOSpecDefault {
             typeName: TypeName[M[K, V]],
             binding: Binding[BindingType.Map[M], M[K, V]],
             doc: Doc,
-            modifiers: Seq[Modifier.Map]
+            modifiers: Seq[Modifier.Reflect]
           )(implicit F: HasBinding[F], D: HasInstance[F]): Lazy[TextCodec[M[K, V]]] =
             Lazy(new TextCodec[M[K, V]] {
               override def encode(value: M[K, V], output: CharBuffer): Unit = output.append(value.toString)
@@ -1857,7 +1907,7 @@ object SchemaSpec extends ZIOSpecDefault {
           override def deriveDynamic[F[_, _]](
             binding: Binding[BindingType.Dynamic, DynamicValue],
             doc: Doc,
-            modifiers: Seq[Modifier.Dynamic]
+            modifiers: Seq[Modifier.Reflect]
           )(implicit
             F: HasBinding[F],
             D: HasInstance[F]
@@ -1873,7 +1923,7 @@ object SchemaSpec extends ZIOSpecDefault {
             typeName: TypeName[A],
             binding: Binding[BindingType.Wrapper[A, B], A],
             doc: Doc,
-            modifiers: Seq[Modifier.Wrapper]
+            modifiers: Seq[Modifier.Reflect]
           )(implicit F: HasBinding[F], D: HasInstance[F]): Lazy[TextCodec[A]] =
             Lazy(new TextCodec[A] {
               override def encode(value: A, output: CharBuffer): Unit = output.append(value.toString)

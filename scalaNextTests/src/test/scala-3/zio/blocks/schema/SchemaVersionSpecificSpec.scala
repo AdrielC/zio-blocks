@@ -56,6 +56,19 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
           )
         )
       },
+      test("derives schema for case classes with named tuple fields") {
+        case class NamedTuples(v1: (b: Byte, sh: Short), v2: (i: Int, l: Long))
+
+        implicit val schema: Schema[NamedTuples] = Schema.derived
+
+        object NamedTuples extends CompanionOptics[NamedTuples] {
+          val v1: Lens[NamedTuples, (b: Byte, sh: Short)] = $(_.v1)
+          val v2: Lens[NamedTuples, (i: Int, l: Long)]    = $(_.v2)
+        }
+
+        val value = NamedTuples((b = 1: Byte, sh = 2: Short), (i = 3, l = 4L))
+        assert(schema.fromDynamicValue(schema.toDynamicValue(value)))(isRight(equalTo(value)))
+      },
       test("derives schema for complex named tuples") {
         @nowarn
         case class Product(i: Int, s: String)
@@ -64,6 +77,7 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         val value2 = (i = (1, 2L), s = ("VVV", "WWW"))
         val value3 = (i = Some(1), s = Some("VVV"))
         val value4 = (1, "VVV")
+        val value5 = NamedTuple.Empty
 
         val schema1: Schema[NamedTuple.NamedTuple[("i", "s"), Int *: String *: EmptyTuple]] = Schema.derived
         val schema2: Schema[NamedTuple.NamedTuple["i" *: "s" *: EmptyTuple, (Int, String)]] = Schema.derived
@@ -78,6 +92,8 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         val schema11: Schema[NamedTuple.Zip[(i: Int, s: String), (i: Long, s: String)]]     = Schema.derived
         val schema12: Schema[NamedTuple.Map[(i: Int, s: String), Option]]                   = Schema.derived
         val schema13: Schema[NamedTuple.From[Product]]                                      = Schema.derived
+        val schema14: Schema[NamedTuple.Empty]                                              = Schema.derived
+        val schema15: Schema[NamedTuple.Drop[(l: Long, i: Int, s: String), 3]]              = Schema.derived
         assert(schema1)(
           equalTo(
             new Schema[(i: Int, s: String)](
@@ -145,6 +161,18 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
             )
           )
         ) &&
+        assert(schema14)(
+          equalTo(
+            new Schema[NamedTuple.Empty](
+              reflect = Reflect.Record[Binding, NamedTuple.Empty](
+                fields = Vector(),
+                typeName = TypeName(Namespace(Seq("scala"), Seq("NamedTuple")), "NamedTuple[]"),
+                recordBinding = null
+              )
+            )
+          )
+        ) &&
+        assert(schema15)(equalTo(schema14)) &&
         assert(schema1.fromDynamicValue(schema1.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
         assert(schema1.fromDynamicValue(schema1.toDynamicValue(value4)))(isRight(equalTo(value1))) &&
         assert(schema2.fromDynamicValue(schema2.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
@@ -167,7 +195,9 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         assert(schema10.fromDynamicValue(schema10.toDynamicValue(value4)))(isRight(equalTo(value1))) &&
         assert(schema11.fromDynamicValue(schema11.toDynamicValue(value2)))(isRight(equalTo(value2))) &&
         assert(schema12.fromDynamicValue(schema12.toDynamicValue(value3)))(isRight(equalTo(value3))) &&
-        assert(schema13.fromDynamicValue(schema13.toDynamicValue(value1)))(isRight(equalTo(value1)))
+        assert(schema13.fromDynamicValue(schema13.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
+        assert(schema14.fromDynamicValue(schema14.toDynamicValue(value5)))(isRight(equalTo(value5))) &&
+        assert(schema15.fromDynamicValue(schema15.toDynamicValue(value5)))(isRight(equalTo(value5)))
       },
       test("derives schema for complex generic tuples") {
         val value1 = (1, "VVV")
@@ -275,7 +305,25 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
           )
         )
       },
-      test("derives schema for named tuples with more than 22 fields") {
+      test("derives schema for recursive named tuples") {
+        type NamedTuple9 = (
+          i1: Int,
+          i2: Int,
+          i3: Int,
+          i4: Int,
+          i5: Int,
+          i6: Int,
+          i7: Int,
+          t8: (Int, Int, Int),
+          o9: Option[NamedTuple9]
+        )
+
+        object NamedTuple9 extends CompanionOptics[NamedTuple9] {
+          implicit val schema: Schema[NamedTuple9]       = Schema.derived
+          val o9: Lens[NamedTuple9, Option[NamedTuple9]] = $(_.o9)
+          val t8_i1: Lens[NamedTuple9, Int]              = $(_.t8(0))
+        }
+
         type NamedTuple24 = (
           i1: Int,
           i2: Int,
@@ -285,8 +333,8 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
           i6: Int,
           i7: Int,
           i8: Int,
-          i9: Int,
-          i10: Int,
+          o9: Option[NamedTuple24],
+          l10: List[NamedTuple9],
           i11: Int,
           i12: Int,
           i13: Int,
@@ -304,15 +352,41 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         )
 
         object NamedTuple24 extends CompanionOptics[NamedTuple24] {
-          implicit val schema: Schema[NamedTuple24] = Schema.derived
-          val b21: Lens[NamedTuple24, Box1]         = $(_(20))
-          val b22: Lens[NamedTuple24, Box2]         = $(_.apply(21))
-          val i23: Lens[NamedTuple24, Int]          = $(_.i23)
-          val s24: Lens[NamedTuple24, String]       = $(_.s24)
+          implicit val schema: Schema[NamedTuple24]        = Schema.derived
+          val o9: Lens[NamedTuple24, Option[NamedTuple24]] = $(_.o9)
+          val l10: Lens[NamedTuple24, List[NamedTuple9]]   = $(_.l10)
+          val b21: Lens[NamedTuple24, Box1]                = $(_(20))
+          val b22: Lens[NamedTuple24, Box2]                = $(_.apply(21))
+          val i23: Lens[NamedTuple24, Int]                 = $(_.i23)
+          val s24: Lens[NamedTuple24, String]              = $(_.s24)
+          val l10_i1s: Traversal[NamedTuple24, Int]        = $(_(9).each(0))
         }
 
-        val record = NamedTuple24.schema.reflect.asRecord
-        val value  = (
+        val record2 = NamedTuple24.schema.reflect.asRecord
+        val value1  = (
+          i1 = 1,
+          i2 = 2,
+          i3 = 3,
+          i4 = 4,
+          i5 = 5,
+          i6 = 6,
+          i7 = 7,
+          t8 = (8, 9, 10),
+          o9 = Some(
+            (
+              i1 = 11,
+              i2 = 12,
+              i3 = 13,
+              i4 = 14,
+              i5 = 15,
+              i6 = 16,
+              i7 = 17,
+              t8 = (18, 19, 20),
+              o9 = None
+            )
+          )
+        )
+        val value2 = (
           i1 = 1,
           i2 = 2,
           i3 = 3,
@@ -321,8 +395,20 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
           i6 = 6,
           i7 = 7,
           i8 = 8,
-          i9 = 9,
-          i10 = 10,
+          o9 = None,
+          l10 = List(
+            (
+              i1 = 11,
+              i2 = 12,
+              i3 = 13,
+              i4 = 14,
+              i5 = 15,
+              i6 = 16,
+              i7 = 17,
+              t8 = (18, 19, 20),
+              o9 = None
+            )
+          ),
           i11 = 11,
           i12 = 12,
           i13 = 13,
@@ -338,13 +424,103 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
           i23 = 23,
           s24 = "24"
         )
-        assert(record.map(_.constructor.usedRegisters))(isSome(equalTo(RegisterOffset(ints = 21, objects = 3)))) &&
-        assert(record.map(_.deconstructor.usedRegisters))(isSome(equalTo(RegisterOffset(ints = 21, objects = 3)))) &&
-        assert(NamedTuple24.b21.get(value))(equalTo(Box1(21L))) &&
-        assert(NamedTuple24.b22.get(value))(equalTo(Box2("22"))) &&
-        assert(NamedTuple24.i23.get(value))(equalTo(23)) &&
-        assert(NamedTuple24.s24.get(value))(equalTo("24")) &&
-        assert(NamedTuple24.schema.fromDynamicValue(NamedTuple24.schema.toDynamicValue(value)))(isRight(equalTo(value)))
+        assert(record2.map(_.constructor.usedRegisters))(isSome(equalTo(RegisterOffset(ints = 19, objects = 5)))) &&
+        assert(record2.map(_.deconstructor.usedRegisters))(isSome(equalTo(RegisterOffset(ints = 19, objects = 5)))) &&
+        assert(NamedTuple9.t8_i1.get(value1))(equalTo(8)) &&
+        assert(NamedTuple24.o9.get(value2))(isNone) &&
+        assert(NamedTuple24.b21.get(value2))(equalTo(Box1(21L))) &&
+        assert(NamedTuple24.b22.get(value2))(equalTo(Box2("22"))) &&
+        assert(NamedTuple24.i23.get(value2))(equalTo(23)) &&
+        assert(NamedTuple24.s24.get(value2))(equalTo("24")) &&
+        assert(NamedTuple24.l10_i1s.fold(value2)(0, _ + _))(equalTo(11)) &&
+        assert(NamedTuple9.schema.fromDynamicValue(NamedTuple9.schema.toDynamicValue(value1)))(
+          isRight(equalTo(value1))
+        ) &&
+        assert(NamedTuple24.schema.fromDynamicValue(NamedTuple24.schema.toDynamicValue(value2)))(
+          isRight(equalTo(value2))
+        )
+      },
+      test("derives schema for recursive generic tuples with more than 22 fields") {
+        type Tuple24 = (
+          Int,
+          Float,
+          Long,
+          Double,
+          Boolean,
+          Byte,
+          Char,
+          Short,
+          Unit,
+          Option[Tuple24],
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int,
+          Int
+        )
+
+        object Tuple24 extends CompanionOptics[Tuple24] {
+          implicit val schema: Schema[Tuple24] = Schema.derived
+          val i21: Lens[Tuple24, Int]          = $(_(20))
+          val i22: Lens[Tuple24, Int]          = $(_.apply(21))
+          val i23: Lens[Tuple24, Int]          = $(_(22))
+          val i24: Lens[Tuple24, Int]          = $(_.apply(23))
+        }
+
+        val record = Tuple24.schema.reflect.asRecord
+        val value  = (
+          1,
+          2.0f,
+          3L,
+          4.0,
+          true,
+          6: Byte,
+          '7',
+          8: Short,
+          (),
+          None,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24
+        )
+        val offset = RegisterOffset(
+          ints = 15,
+          floats = 1,
+          longs = 1,
+          doubles = 1,
+          booleans = 1,
+          bytes = 1,
+          chars = 1,
+          shorts = 1,
+          objects = 1
+        )
+        assert(record.map(_.constructor.usedRegisters))(isSome(equalTo(offset))) &&
+        assert(record.map(_.deconstructor.usedRegisters))(isSome(equalTo(offset))) &&
+        assert(Tuple24.i21.get(value))(equalTo(21)) &&
+        assert(Tuple24.i22.get(value))(equalTo(22)) &&
+        assert(Tuple24.i23.get(value))(equalTo(23)) &&
+        assert(Tuple24.i24.get(value))(equalTo(24)) &&
+        assert(Tuple24.schema.fromDynamicValue(Tuple24.schema.toDynamicValue(value)))(isRight(equalTo(value)))
       }
     )
   )

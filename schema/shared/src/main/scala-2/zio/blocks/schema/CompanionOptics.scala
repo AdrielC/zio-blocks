@@ -53,13 +53,62 @@ private object CompanionOptics {
 
     def toPathBody(tree: c.Tree): c.Tree = tree match {
       case q"($_) => $pathBody" => pathBody
-      case _                    => fail(s"Expected a lambda expression, got: ${showRaw(tree)}")
+      case _                    => fail(s"Expected a lambda expression, got: '$tree'")
+    }
+
+    def typeArgs(tpe: Type): List[Type] = tpe.typeArgs.map(_.dealias)
+
+    implicit val positionOrdering: Ordering[Symbol] =
+      (x: Symbol, y: Symbol) => {
+        val xPos  = x.pos
+        val yPos  = y.pos
+        val xFile = xPos.source.file.absolute
+        val yFile = yPos.source.file.absolute
+        var diff  = xFile.path.compareTo(yFile.path)
+        if (diff == 0) diff = xFile.name.compareTo(yFile.name)
+        if (diff == 0) diff = xPos.line.compareTo(yPos.line)
+        if (diff == 0) diff = xPos.column.compareTo(yPos.column)
+        if (diff == 0) {
+          // make sorting stable in case of missing sources for sub-project or *.jar dependencies
+          diff = NameTransformer.decode(x.fullName).compareTo(NameTransformer.decode(y.fullName))
+        }
+        diff
+      }
+
+    def directSubTypes(tpe: Type): List[Type] = {
+      val tpeClass         = tpe.typeSymbol.asClass
+      val tpeTypeArgs      = typeArgs(tpe)
+      val tpeParamsAndArgs =
+        if (tpeTypeArgs ne Nil) tpeClass.typeParams.map(_.toString).zip(tpeTypeArgs).toMap
+        else Map.empty[String, Type]
+      tpeClass.knownDirectSubclasses.toArray
+        .sortInPlace()
+        .map { symbol =>
+          val classSymbol = symbol.asClass
+          val typeParams  = classSymbol.typeParams
+          val classType   = classSymbol.toType
+          if (typeParams eq Nil) classType
+          else {
+            classType.substituteTypes(
+              typeParams,
+              typeParams.map { typeParam =>
+                tpeParamsAndArgs.getOrElse(
+                  typeParam.toString,
+                  fail(
+                    s"Type parameter '${typeParam.name}' of '$symbol' can't be deduced from type arguments of '$tpe'."
+                  )
+                )
+              }
+            )
+          }
+        }
+        .toList
     }
 
     def toOptic(tree: c.Tree): c.Tree = tree match {
       case q"$_[..$_]($parent).each" =>
-        val parentTpe  = parent.tpe.dealias.widen
-        val elementTpe = tree.tpe.dealias.widen
+        val parentTpe  = parent.tpe.widen.dealias
+        val elementTpe = tree.tpe.widen.dealias
         val optic      = toOptic(parent)
         if (optic.isEmpty) {
           q"""$schema.reflect.asSequenceUnknown.map { x =>
@@ -76,8 +125,8 @@ private object CompanionOptics {
               .asInstanceOf[_root_.zio.blocks.schema.Traversal[$parentTpe, $elementTpe]])"""
         }
       case q"$_[..$_]($parent).eachKey" =>
-        val parentTpe = parent.tpe.dealias.widen
-        val keyTpe    = tree.tpe.dealias.widen
+        val parentTpe = parent.tpe.widen.dealias
+        val keyTpe    = tree.tpe.widen.dealias
         val optic     = toOptic(parent)
         if (optic.isEmpty) {
           q"""$schema.reflect.asMapUnknown.map { x =>
@@ -94,8 +143,8 @@ private object CompanionOptics {
               .asInstanceOf[_root_.zio.blocks.schema.Traversal[$parentTpe, $keyTpe]])"""
         }
       case q"$_[..$_]($parent).eachValue" =>
-        val parentTpe = parent.tpe.dealias.widen
-        val valueTpe  = tree.tpe.dealias.widen
+        val parentTpe = parent.tpe.widen.dealias
+        val valueTpe  = tree.tpe.widen.dealias
         val optic     = toOptic(parent)
         if (optic.isEmpty) {
           q"""$schema.reflect.asMapUnknown.map { x =>
@@ -112,20 +161,21 @@ private object CompanionOptics {
               .asInstanceOf[_root_.zio.blocks.schema.Traversal[$parentTpe, $valueTpe]])"""
         }
       case q"$_[..$_]($parent).when[$caseTree]" =>
-        val caseTpe  = caseTree.tpe.dealias
-        val caseName = NameTransformer.decode(caseTpe.typeSymbol.name.toString)
-        val optic    = toOptic(parent)
+        val parentTpe = parent.tpe.widen.dealias
+        val caseTpe   = caseTree.tpe.dealias
+        val caseIdx   = directSubTypes(parentTpe).indexWhere(_ =:= caseTpe, 0)
+        val optic     = toOptic(parent)
         if (optic.isEmpty) {
-          q"""$schema.reflect.asVariant.flatMap(_.prismByName[$caseTpe]($caseName))
+          q"""$schema.reflect.asVariant.flatMap(_.prismByIndex[$caseTpe]($caseIdx))
                 .getOrElse(sys.error("Expected a variant"))"""
         } else {
           q"""val optic = $optic
-              optic.apply(optic.focus.asVariant.flatMap(_.prismByName[$caseTpe]($caseName))
+              optic.apply(optic.focus.asVariant.flatMap(_.prismByIndex[$caseTpe]($caseIdx))
                 .getOrElse(sys.error("Expected a variant")))"""
         }
       case q"$_[..$_]($parent).wrapped[$wrappedTree]" =>
-        val parentTpe  = parent.tpe.dealias.widen
-        val wrappedTpe = wrappedTree.tpe.dealias.widen
+        val parentTpe  = parent.tpe.widen.dealias
+        val wrappedTpe = wrappedTree.tpe.dealias
         val optic      = toOptic(parent)
         if (optic.isEmpty) {
           q"""$schema.reflect.asWrapperUnknown.map { x =>
@@ -141,9 +191,9 @@ private object CompanionOptics {
               .getOrElse(sys.error("Expected a wrapper"))
               .asInstanceOf[_root_.zio.blocks.schema.Optional[$parentTpe, $wrappedTpe]])"""
         }
-      case q"$_[..$_]($parent).at(..$args)" if args.size == 1 && args.head.tpe.dealias.widen =:= definitions.IntTpe =>
-        val parentTpe  = parent.tpe.dealias.widen
-        val elementTpe = tree.tpe.dealias.widen
+      case q"$_[..$_]($parent).at(..$args)" if args.size == 1 && args.head.tpe.widen.dealias <:< definitions.IntTpe =>
+        val parentTpe  = parent.tpe.widen.dealias
+        val elementTpe = tree.tpe.widen.dealias
         val optic      = toOptic(parent)
         if (optic.isEmpty) {
           q"""$schema.reflect.asSequenceUnknown.map { x =>
@@ -160,8 +210,8 @@ private object CompanionOptics {
               .asInstanceOf[_root_.zio.blocks.schema.Optional[$parentTpe, $elementTpe]])"""
         }
       case q"$_[..$_]($parent).atKey(..$args)" if args.size == 1 =>
-        val parentTpe = parent.tpe.dealias.widen
-        val valueTpe  = tree.tpe.dealias.widen
+        val parentTpe = parent.tpe.widen.dealias
+        val valueTpe  = tree.tpe.widen.dealias
         val optic     = toOptic(parent)
         if (optic.isEmpty) {
           q"""$schema.reflect.asMapUnknown.map { x =>
@@ -178,9 +228,9 @@ private object CompanionOptics {
               .asInstanceOf[_root_.zio.blocks.schema.Optional[$parentTpe, $valueTpe]])"""
         }
       case q"$_[..$_]($parent).atIndices(..$args)"
-          if args.nonEmpty && args.forall(_.tpe.dealias.widen =:= definitions.IntTpe) =>
-        val parentTpe  = parent.tpe.dealias.widen
-        val elementTpe = tree.tpe.dealias.widen
+          if args.nonEmpty && args.forall(_.tpe.widen.dealias <:< definitions.IntTpe) =>
+        val parentTpe  = parent.tpe.widen.dealias
+        val elementTpe = tree.tpe.widen.dealias
         val optic      = toOptic(parent)
         if (optic.isEmpty) {
           q"""$schema.reflect.asSequenceUnknown.map { x =>
@@ -197,8 +247,8 @@ private object CompanionOptics {
               .asInstanceOf[_root_.zio.blocks.schema.Traversal[$parentTpe, $elementTpe]])"""
         }
       case q"$_[..$_]($parent).atKeys(..$args)" if args.nonEmpty =>
-        val parentTpe = parent.tpe.dealias.widen
-        val valueTpe  = tree.tpe.dealias.widen
+        val parentTpe = parent.tpe.widen.dealias
+        val valueTpe  = tree.tpe.widen.dealias
         val optic     = toOptic(parent)
         if (optic.isEmpty) {
           q"""$schema.reflect.asMapUnknown.map { x =>
@@ -215,7 +265,7 @@ private object CompanionOptics {
               .asInstanceOf[_root_.zio.blocks.schema.Traversal[$parentTpe, $valueTpe]])"""
         }
       case q"$parent.$child" =>
-        val childTpe  = tree.tpe.dealias.widen
+        val childTpe  = tree.tpe.widen.dealias
         val fieldName = NameTransformer.decode(child.toString)
         val optic     = toOptic(parent)
         if (optic.isEmpty) {

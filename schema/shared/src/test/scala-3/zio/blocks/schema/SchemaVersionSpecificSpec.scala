@@ -168,6 +168,7 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         val value1 = (1, "VVV")
         val value2 = ((1, 2L), ("VVV", "WWW"))
         val value3 = (Some(1), Some("VVV"))
+        val value4 = EmptyTuple
 
         val schema1: Schema[Tuple.Tail[(Long, Int, String)]]                         = Schema.derived
         val schema2: Schema[Tuple.Init[(Int, String, Long)]]                         = Schema.derived
@@ -179,6 +180,8 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         val schema8: Schema[Int *: Tuple1[String]]                                   = Schema.derived
         val schema9: Schema[Tuple.Zip[(Int, String), (Long, String)]]                = Schema.derived
         val schema10: Schema[Tuple.Map[(Int, String), Option]]                       = Schema.derived
+        val schema11: Schema[EmptyTuple]                                             = Schema.derived
+        val schema12: Schema[Tuple.Drop[(Long, Int, String), 3]]                     = Schema.derived
         assert(schema1)(
           equalTo(
             new Schema[(Int, String)](
@@ -243,6 +246,18 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
             )
           )
         ) &&
+        assert(schema11)(
+          equalTo(
+            new Schema[EmptyTuple](
+              reflect = Reflect.Record[Binding, EmptyTuple](
+                fields = Vector(),
+                typeName = TypeName(Namespace(Seq("scala"), Seq("Tuple$package")), "EmptyTuple"),
+                recordBinding = null
+              )
+            )
+          )
+        ) &&
+        assert(schema12)(equalTo(schema11)) &&
         assert(schema1.fromDynamicValue(schema1.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
         assert(schema2.fromDynamicValue(schema2.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
         assert(schema3.fromDynamicValue(schema3.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
@@ -251,7 +266,9 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         assert(schema6.fromDynamicValue(schema6.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
         assert(schema7.fromDynamicValue(schema7.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
         assert(schema9.fromDynamicValue(schema9.toDynamicValue(value2)))(isRight(equalTo(value2))) &&
-        assert(schema10.fromDynamicValue(schema10.toDynamicValue(value3)))(isRight(equalTo(value3)))
+        assert(schema10.fromDynamicValue(schema10.toDynamicValue(value3)))(isRight(equalTo(value3))) &&
+        assert(schema11.fromDynamicValue(schema11.toDynamicValue(value4)))(isRight(equalTo(value4))) &&
+        assert(schema12.fromDynamicValue(schema12.toDynamicValue(value4)))(isRight(equalTo(value4)))
       },
       test("derives schema for case class with opaque subtype fields") {
         import Id.schema
@@ -347,14 +364,14 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
       test("derives schema for tuples with more than 22 fields") {
         type Tuple24 = (
           Int,
-          Int,
-          Int,
-          Int,
-          Int,
-          Int,
-          Int,
-          Int,
-          Int,
+          Float,
+          Long,
+          Double,
+          Boolean,
+          Byte,
+          Char,
+          Short,
+          Unit,
           Int,
           Int,
           Int,
@@ -387,14 +404,14 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         val record = Tuple24.schema.reflect.asRecord
         val value  = (
           1,
-          2,
-          3,
-          4,
-          5,
-          6,
-          7,
-          8,
-          9,
+          2.0f,
+          3L,
+          4.0,
+          true,
+          6: Byte,
+          '7',
+          8: Short,
+          (),
           10,
           11,
           12,
@@ -411,8 +428,19 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
           23,
           "24"
         )
-        assert(record.map(_.constructor.usedRegisters))(isSome(equalTo(RegisterOffset(ints = 19, objects = 5)))) &&
-        assert(record.map(_.deconstructor.usedRegisters))(isSome(equalTo(RegisterOffset(ints = 19, objects = 5)))) &&
+        val offset = RegisterOffset(
+          ints = 11,
+          floats = 1,
+          longs = 1,
+          doubles = 1,
+          booleans = 1,
+          bytes = 1,
+          chars = 1,
+          shorts = 1,
+          objects = 5
+        )
+        assert(record.map(_.constructor.usedRegisters))(isSome(equalTo(offset))) &&
+        assert(record.map(_.deconstructor.usedRegisters))(isSome(equalTo(offset))) &&
         assert(Tuple24.i17.get(value))(equalTo(InnerValue(17))) &&
         assert(Tuple24.i18.get(value))(equalTo(InnerId.applyUnsafe("18"))) &&
         assert(Tuple24.o19.get(value))(equalTo(Value(19))) &&
@@ -426,10 +454,51 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
     ),
     suite("Reflect.Sequence")(
       test("derives schema for IArray") {
-        val schema1 = Schema.derived[IArray[Int]]
-        val schema2 = Schema.derived[IArray[Long]]
-        val schema3 = Schema.derived[IArray[Char]]
-        val schema4 = Schema.derived[IArray[String]]
+        val schema1                                 = Schema.derived[IArray[Int]]
+        val schema2                                 = Schema.derived[IArray[Long]]
+        val schema3                                 = Schema.derived[IArray[Char]]
+        val schema4                                 = Schema.derived[IArray[String]]
+        val schema5                                 = Schema.derived[IArray[Boolean]]
+        val schema6                                 = Schema.derived[IArray[Byte]]
+        val schema7                                 = Schema.derived[IArray[Short]]
+        val schema8                                 = Schema.derived[IArray[Float]]
+        val schema9                                 = Schema.derived[IArray[Double]]
+        val traversal1: Traversal[IArray[Int], Int] =
+          Traversal.seqValues(
+            schema1.reflect.asSequenceUnknown.get.sequence.asInstanceOf[Reflect.Sequence[Binding, Int, IArray]]
+          )
+        val traversal2: Traversal[IArray[Long], Long] =
+          Traversal.seqValues(
+            schema2.reflect.asSequenceUnknown.get.sequence.asInstanceOf[Reflect.Sequence[Binding, Long, IArray]]
+          )
+        val traversal3: Traversal[IArray[Char], Char] =
+          Traversal.seqValues(
+            schema3.reflect.asSequenceUnknown.get.sequence.asInstanceOf[Reflect.Sequence[Binding, Char, IArray]]
+          )
+        val traversal4: Traversal[IArray[String], String] =
+          Traversal.seqValues(
+            schema4.reflect.asSequenceUnknown.get.sequence.asInstanceOf[Reflect.Sequence[Binding, String, IArray]]
+          )
+        val traversal5: Traversal[IArray[Boolean], Boolean] =
+          Traversal.seqValues(
+            schema5.reflect.asSequenceUnknown.get.sequence.asInstanceOf[Reflect.Sequence[Binding, Boolean, IArray]]
+          )
+        val traversal6: Traversal[IArray[Byte], Byte] =
+          Traversal.seqValues(
+            schema6.reflect.asSequenceUnknown.get.sequence.asInstanceOf[Reflect.Sequence[Binding, Byte, IArray]]
+          )
+        val traversal7: Traversal[IArray[Short], Short] =
+          Traversal.seqValues(
+            schema7.reflect.asSequenceUnknown.get.sequence.asInstanceOf[Reflect.Sequence[Binding, Short, IArray]]
+          )
+        val traversal8: Traversal[IArray[Float], Float] =
+          Traversal.seqValues(
+            schema8.reflect.asSequenceUnknown.get.sequence.asInstanceOf[Reflect.Sequence[Binding, Float, IArray]]
+          )
+        val traversal9: Traversal[IArray[Double], Double] =
+          Traversal.seqValues(
+            schema9.reflect.asSequenceUnknown.get.sequence.asInstanceOf[Reflect.Sequence[Binding, Double, IArray]]
+          )
         assert(schema1.reflect.typeName)(
           equalTo(TypeName(Namespace(Seq("scala"), Seq("IArray$package")), "IArray", Seq(TypeName.int)))
         ) &&
@@ -442,18 +511,57 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         assert(schema4.reflect.typeName)(
           equalTo(TypeName(Namespace(Seq("scala"), Seq("IArray$package")), "IArray", Seq(TypeName.string)))
         ) &&
-        assert(schema1.fromDynamicValue(schema1.toDynamicValue(IArray(1, 2))).map(_.toSeq))(
-          isRight(equalTo(Seq(1, 2)))
+        assert(schema5.reflect.typeName)(
+          equalTo(TypeName(Namespace(Seq("scala"), Seq("IArray$package")), "IArray", Seq(TypeName.boolean)))
         ) &&
-        assert(schema2.fromDynamicValue(schema2.toDynamicValue(IArray(1L, 2L))).map(_.toSeq))(
-          isRight(equalTo(Seq(1L, 2L)))
+        assert(schema6.reflect.typeName)(
+          equalTo(TypeName(Namespace(Seq("scala"), Seq("IArray$package")), "IArray", Seq(TypeName.byte)))
         ) &&
-        assert(schema3.fromDynamicValue(schema3.toDynamicValue(IArray('1', '2'))).map(_.toSeq))(
-          isRight(equalTo(Seq('1', '2')))
+        assert(schema7.reflect.typeName)(
+          equalTo(TypeName(Namespace(Seq("scala"), Seq("IArray$package")), "IArray", Seq(TypeName.short)))
         ) &&
-        assert(schema4.fromDynamicValue(schema4.toDynamicValue(IArray("1", "2"))).map(_.toSeq))(
-          isRight(equalTo(Seq("1", "2")))
-        )
+        assert(schema8.reflect.typeName)(
+          equalTo(TypeName(Namespace(Seq("scala"), Seq("IArray$package")), "IArray", Seq(TypeName.float)))
+        ) &&
+        assert(schema9.reflect.typeName)(
+          equalTo(TypeName(Namespace(Seq("scala"), Seq("IArray$package")), "IArray", Seq(TypeName.double)))
+        ) &&
+        assert(schema1.fromDynamicValue(schema1.toDynamicValue(IArray(1, 2, 3))).map(_.toSeq))(
+          isRight(equalTo(Seq(1, 2, 3)))
+        ) &&
+        assert(schema2.fromDynamicValue(schema2.toDynamicValue(IArray(1L, 2L, 3L))).map(_.toSeq))(
+          isRight(equalTo(Seq(1L, 2L, 3L)))
+        ) &&
+        assert(schema3.fromDynamicValue(schema3.toDynamicValue(IArray('1', '2', '3'))).map(_.toSeq))(
+          isRight(equalTo(Seq('1', '2', '3')))
+        ) &&
+        assert(schema4.fromDynamicValue(schema4.toDynamicValue(IArray("1", "2", "3"))).map(_.toSeq))(
+          isRight(equalTo(Seq("1", "2", "3")))
+        ) &&
+        assert(schema5.fromDynamicValue(schema5.toDynamicValue(IArray(true, false, true))).map(_.toSeq))(
+          isRight(equalTo(Seq(true, false, true)))
+        ) &&
+        assert(schema6.fromDynamicValue(schema6.toDynamicValue(IArray(1: Byte, 2: Byte, 3: Byte))).map(_.toSeq))(
+          isRight(equalTo(Seq(1: Byte, 2: Byte, 3: Byte)))
+        ) &&
+        assert(schema7.fromDynamicValue(schema7.toDynamicValue(IArray(1: Short, 2: Short, 3: Short))).map(_.toSeq))(
+          isRight(equalTo(Seq(1: Short, 2: Short, 3: Short)))
+        ) &&
+        assert(schema8.fromDynamicValue(schema8.toDynamicValue(IArray(1.0f, 2.0f, 3.0f))).map(_.toSeq))(
+          isRight(equalTo(Seq(1.0f, 2.0f, 3.0f)))
+        ) &&
+        assert(schema9.fromDynamicValue(schema9.toDynamicValue(IArray(1.0, 2.0, 3.0))).map(_.toSeq))(
+          isRight(equalTo(Seq(1.0, 2.0, 3.0)))
+        ) &&
+        assert(traversal1.fold(IArray(1, 2, 3))(0, _ + _))(equalTo(6)) &&
+        assert(traversal2.fold(IArray(1L, 2L, 3L))(0L, _ + _))(equalTo(6L)) &&
+        assert(traversal3.fold(IArray('1', '2', '3'))("", _ + _))(equalTo("123")) &&
+        assert(traversal4.fold(IArray("1", "2", "3"))("", _ + _))(equalTo("123")) &&
+        assert(traversal5.fold(IArray(true, false, true))(false, _ | _))(equalTo(true)) &&
+        assert(traversal6.fold(IArray(1: Byte, 2: Byte, 3: Byte))(0, _ + _))(equalTo(6)) &&
+        assert(traversal7.fold(IArray(1: Short, 2: Short, 3: Short))(0, _ + _))(equalTo(6)) &&
+        assert(traversal8.fold(IArray(1.0f, 2.0f, 3.0f))(0.0f, _ + _))(equalTo(6.0f)) &&
+        assert(traversal9.fold(IArray(1.0, 2.0, 3.0))(0.0, _ + _))(equalTo(6.0))
       }
     ),
     suite("Reflect.Variant")(
@@ -557,6 +665,11 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         ) &&
         assert(variant.map(_.doc))(isSome(equalTo(Doc("/** Variant: Color */"))))
       },
+      test("derives schema for one case enums using 'derives' keyword") {
+        val schema  = Schema[OneCaseEnum]
+        val variant = schema.reflect.asVariant
+        assert(variant.map(_.cases(0).name))(isSome(equalTo("Case1")))
+      },
       test("derives schema for type recursive Scala 3 enums") {
         val schema  = Schema.derived[FruitEnum[?]]
         val variant = schema.reflect.asVariant
@@ -580,27 +693,75 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         )
       },
       test("derives schema for Scala 3 unions") {
-        type Value = Int | Boolean
+        type Value = Int | Boolean | (Int, Boolean) | List[Int] | Map[Int, Long]
 
         implicit val schema: Schema[Value] = Schema.derived
 
         object Value extends CompanionOptics[Value] {
-          val int: Prism[Value, Int]         = $(_.when[Int])
-          val boolean: Prism[Value, Boolean] = $(_.when[Boolean])
+          val int: Prism[Value, Int]              = $(_.when[Int])
+          val boolean: Prism[Value, Boolean]      = $(_.when[Boolean])
+          val tuple: Prism[Value, (Int, Boolean)] = $(_.when[(Int, Boolean)])
+          val tuple_1: Optional[Value, Int]       = $(_.when[(Int, Boolean)](0))
+          val li: Prism[Value, List[Int]]         = $(_.when[List[Int]])
+          val li_1: Optional[Value, Int]          = $(_.when[List[Int]].at(0))
+          val mil: Prism[Value, Map[Int, Long]]   = $(_.when[Map[Int, Long]])
+          val mil_1: Optional[Value, Long]        = $(_.when[Map[Int, Long]].atKey(1))
         }
 
         val variant = schema.reflect.asVariant
         assert(Value.int.getOption(123))(isSome(equalTo(123))) &&
         assert(Value.boolean.getOption(true))(isSome(equalTo(true))) &&
+        assert(Value.tuple.getOption(true))(isNone) &&
+        assert(Value.tuple_1.getOption((1, true)))(isSome(equalTo(1))) &&
+        assert(Value.li.getOption(List(1, 2, 3)))(isSome(equalTo(List(1, 2, 3)))) &&
+        assert(Value.li_1.getOption(List(1, 2, 3)))(isSome(equalTo(1))) &&
+        assert(Value.mil.getOption(Map(1 -> 1L, 2 -> 2L, 3 -> 3L)))(isSome(equalTo(Map(1 -> 1L, 2 -> 2L, 3 -> 3L)))) &&
+        assert(Value.mil_1.getOption(Map(1 -> 1L, 2 -> 2L, 3 -> 3L)))(isSome(equalTo(1L))) &&
         assert(Value.int.replace(123, 321))(equalTo(321)) &&
         assert(Value.boolean.replace(true, false))(equalTo(false)) &&
+        assert(Value.tuple.replace((1, true), (1, false)))(equalTo((1, false))) &&
+        assert(Value.tuple_1.replace((1, true), 2))(equalTo((2, true))) &&
         assert(schema.fromDynamicValue(schema.toDynamicValue(123)))(isRight(equalTo(123))) &&
         assert(schema.fromDynamicValue(schema.toDynamicValue(true)))(isRight(equalTo(true))) &&
         assert(schema)(not(equalTo(Schema.derived[Boolean | Int]))) &&
-        assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("Int", "Boolean")))) &&
+        assert(variant.map(_.cases.map(_.name)))(
+          isSome(equalTo(Vector("Int", "Boolean", "Tuple2", "collection.immutable.List", "collection.immutable.Map")))
+        ) &&
         assert(variant.map(_.typeName))(
-          isSome(equalTo(TypeName(namespace = Namespace(packages = Nil), name = "|")))
+          isSome(
+            equalTo(
+              TypeName(
+                Namespace(Nil),
+                "|",
+                Seq(
+                  TypeName.int,
+                  TypeName.boolean,
+                  TypeName[(Int, Boolean)](Namespace(Seq("scala")), "Tuple2", Seq(TypeName.int, TypeName.boolean)),
+                  TypeName.list(TypeName.int),
+                  TypeName.map(TypeName.int, TypeName.long)
+                )
+              )
+            )
+          )
         )
+      },
+      test("derives schema for case classes with Scala 3 union fields") {
+        type Value1 = Int | Boolean
+        type Value2 = Int | String
+
+        case class Unions(v1: Value1, v2: Value2)
+
+        implicit val schema: Schema[Unions] = Schema.derived
+
+        object Unions extends CompanionOptics[Unions] {
+          val v1: Lens[Unions, Value1] = $(_.v1)
+          val v2: Lens[Unions, Value2] = $(_.v2)
+        }
+
+        val value1 = Unions(123, 321)
+        val value2 = Unions(true, "VVV")
+        assert(schema.fromDynamicValue(schema.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(value2)))(isRight(equalTo(value2)))
       },
       test("derives schema for recursive generic Scala 3 enums") {
         val schema  = Schema.derived[LinkedList[Int]]
@@ -609,6 +770,11 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
           isRight(equalTo(LinkedList.Node(2, LinkedList.Node(1, LinkedList.End))))
         ) &&
         assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("End", "Node")))) &&
+        assert(variant.flatMap(_.cases(1).value.asRecord.map(_.fields(1).modifiers)))(
+          isSome(
+            equalTo(Seq(Modifier.config("field-key", "field-value")))
+          )
+        ) &&
         assert(variant.map(_.typeName))(
           isSome(
             equalTo(
@@ -643,7 +809,20 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
           )
         )
       }
-    )
+    ),
+    test("doesn't generate schema for unsupported collections") {
+      typeCheck {
+        "Schema.derived[scala.collection.mutable.CollisionProofHashMap[String, Int]]"
+      }.map(
+        assert(_)(
+          isLeft(
+            containsString(
+              "Cannot derive schema for 'scala.collection.mutable.CollisionProofHashMap[scala.Predef.String, scala.Int]'."
+            )
+          )
+        )
+      )
+    }
   )
 
   /** Variant: Color */
@@ -678,7 +857,7 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
 
   enum LinkedList[+T]:
     case End
-    case Node(value: T, next: LinkedList[T])
+    case Node(value: T, @Modifier.config("field-key", "field-value") next: LinkedList[T])
 
   enum HKEnum[A[_]]:
     case Case1(a: A[Int])    extends HKEnum[A]
@@ -717,6 +896,8 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
       inline def toInt: Int = x
     }
   }
+
+  enum OneCaseEnum derives Schema { case Case1 }
 }
 
 case class InnerOpaque(id: InnerId, value: InnerValue) derives Schema

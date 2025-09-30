@@ -12,7 +12,6 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
   final type Structure = A
 
   type NodeBinding <: BindingType
-  type ModifierType <: Modifier
 
   def metadata: F[NodeBinding, A]
 
@@ -49,7 +48,7 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
   def doc(value: String): Reflect[F, A] = doc(Doc.Text(value))
 
   override def equals(obj: Any): Boolean = obj match {
-    case that: Reflect[_, _] => (this eq that) || inner == that.inner
+    case that: Reflect[?, ?] => (this eq that) || inner == that.inner
     case _                   => false
   }
 
@@ -128,13 +127,13 @@ sealed trait Reflect[F[_, _], A] extends Reflectable[A] { self =>
 
   def isWrapper: Boolean = false
 
-  def modifiers: Seq[ModifierType]
+  def modifiers: Seq[Modifier.Reflect]
 
-  def modifier(modifier: ModifierType): Reflect[F, A]
+  def modifier(modifier: Modifier.Reflect): Reflect[F, A]
 
-  def modifiers(modifiers: Iterable[ModifierType]): Reflect[F, A]
+  def modifiers(modifiers: Iterable[Modifier.Reflect]): Reflect[F, A]
 
-  def nodeType: Reflect.Type { type NodeBinding = self.NodeBinding; type ModifierType = self.ModifierType }
+  def nodeType: Reflect.Type { type NodeBinding = self.NodeBinding }
 
   lazy val noBinding: Reflect[NoBinding, A] = transform(DynamicOptic.root, ReflectTransformer.noBinding()).force
 
@@ -236,44 +235,36 @@ object Reflect {
   type Bound[A] = Reflect[Binding, A]
 
   sealed trait Type {
-    type ModifierType <: Modifier
     type NodeBinding <: BindingType
   }
 
   object Type {
     case object Record extends Type {
-      type ModifierType = Modifier.Record
-      type NodeBinding  = BindingType.Record
+      type NodeBinding = BindingType.Record
     }
 
     case object Variant extends Type {
-      type ModifierType = Modifier.Variant
-      type NodeBinding  = BindingType.Variant
+      type NodeBinding = BindingType.Variant
     }
 
     case class Sequence[C[_]]() extends Type {
-      type ModifierType = Modifier.Seq
-      type NodeBinding  = BindingType.Seq[C]
+      type NodeBinding = BindingType.Seq[C]
     }
 
     case class Map[M[_, _]]() extends Type {
-      type ModifierType = Modifier.Map
-      type NodeBinding  = BindingType.Map[M]
+      type NodeBinding = BindingType.Map[M]
     }
 
     case object Dynamic extends Type {
-      type ModifierType = Modifier.Dynamic
-      type NodeBinding  = BindingType.Dynamic
+      type NodeBinding = BindingType.Dynamic
     }
 
     case object Primitive extends Type {
-      type ModifierType = Modifier.Primitive
-      type NodeBinding  = BindingType.Primitive
+      type NodeBinding = BindingType.Primitive
     }
 
     case class Wrapper[A, B]() extends Type {
-      type ModifierType = Modifier.Wrapper
-      type NodeBinding  = BindingType.Wrapper[A, B]
+      type NodeBinding = BindingType.Wrapper[A, B]
     }
   }
 
@@ -286,7 +277,7 @@ object Reflect {
     typeName: TypeName[A],
     recordBinding: F[BindingType.Record, A],
     doc: Doc = Doc.Empty,
-    modifiers: Seq[Modifier.Record] = Nil
+    modifiers: Seq[Modifier.Reflect] = Nil
   ) extends Reflect[F, A] { self =>
     private[this] val fieldValues      = fields.map(_.value).toArray
     private[this] val fieldIndexByName = new StringToIntMap(fields.length) {
@@ -300,8 +291,7 @@ object Reflect {
 
     protected def inner: Any = (fields, typeName, doc, modifiers)
 
-    type NodeBinding  = BindingType.Record
-    type ModifierType = Modifier.Record
+    type NodeBinding = BindingType.Record
 
     def doc(value: Doc): Record[F, A] = copy(doc = value)
 
@@ -374,16 +364,16 @@ object Reflect {
 
     def lensByName[B](name: String): Option[Lens[A, B]] = lensByIndex(fieldIndexByName.get(name))
 
-    def lensByIndex[B](idx: Int): Option[Lens[A, B]] =
-      if (idx >= 0 && idx < fields.length) {
-        new Some(Lens(this.asInstanceOf[Reflect.Record.Bound[A]], fields(idx).asInstanceOf[Term.Bound[A, B]]))
+    def lensByIndex[B](index: Int): Option[Lens[A, B]] =
+      if (index >= 0 && index < fields.length) {
+        new Some(Lens(this.asInstanceOf[Reflect.Record.Bound[A]], fields(index).asInstanceOf[Term.Bound[A, B]]))
       } else None
 
     def metadata: F[NodeBinding, A] = recordBinding
 
-    def modifier(modifier: Modifier.Record): Record[F, A] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Record[F, A] = copy(modifiers = modifiers :+ modifier)
 
-    def modifiers(modifiers: Iterable[Modifier.Record]): Record[F, A] = copy(modifiers = this.modifiers ++ modifiers)
+    def modifiers(modifiers: Iterable[Modifier.Reflect]): Record[F, A] = copy(modifiers = this.modifiers ++ modifiers)
 
     def modifyField(name: String)(f: Term.Updater[F]): Option[Record[F, A]] = {
       val idx = fieldIndexByName.get(name)
@@ -418,7 +408,7 @@ object Reflect {
 
     def transform[G[_, _]](path: DynamicOptic, f: ReflectTransformer[F, G]): Lazy[Record[G, A]] =
       for {
-        fields <- Lazy.foreach(fields.toVector)(_.transform(path, Term.Type.Record, f))
+        fields <- Lazy.foreach(fields)(_.transform(path, Term.Type.Record, f))
         record <- f.transformRecord(path, fields, typeName, recordBinding, doc, modifiers)
       } yield record
 
@@ -503,7 +493,7 @@ object Reflect {
     typeName: TypeName[A],
     variantBinding: F[BindingType.Variant, A],
     doc: Doc = Doc.Empty,
-    modifiers: Seq[Modifier.Variant] = Nil
+    modifiers: Seq[Modifier.Reflect] = Nil
   ) extends Reflect[F, A] {
     private[this] val caseIndexByName = new StringToIntMap(cases.length) {
       cases.foreach {
@@ -516,8 +506,7 @@ object Reflect {
 
     protected def inner: Any = (cases, typeName, doc, modifiers)
 
-    type NodeBinding  = BindingType.Variant
-    type ModifierType = Modifier.Variant
+    type NodeBinding = BindingType.Variant
 
     def doc(value: Doc): Variant[F, A] = copy(doc = value)
 
@@ -562,9 +551,9 @@ object Reflect {
 
     def metadata: F[NodeBinding, A] = variantBinding
 
-    def modifier(modifier: Modifier.Variant): Variant[F, A] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Variant[F, A] = copy(modifiers = modifiers :+ modifier)
 
-    def modifiers(modifiers: Iterable[Modifier.Variant]): Variant[F, A] = copy(modifiers = this.modifiers ++ modifiers)
+    def modifiers(modifiers: Iterable[Modifier.Reflect]): Variant[F, A] = copy(modifiers = this.modifiers ++ modifiers)
 
     def modifyCase(name: String)(f: Term.Updater[F]): Option[Variant[F, A]] = {
       val idx = caseIndexByName.get(name)
@@ -576,12 +565,12 @@ object Reflect {
       } else None
     }
 
-    def prismByName[B <: A](name: String): Option[Prism[A, B]] = {
-      val idx = caseIndexByName.get(name)
-      if (idx >= 0) {
-        new Some(Prism(this.asInstanceOf[Reflect.Variant.Bound[A]], cases(idx).asInstanceOf[Term.Bound[A, B]]))
+    def prismByName[B <: A](name: String): Option[Prism[A, B]] = prismByIndex(caseIndexByName.get(name))
+
+    def prismByIndex[B <: A](index: Int): Option[Prism[A, B]] =
+      if (index >= 0 && index < cases.length) {
+        new Some(Prism(this.asInstanceOf[Reflect.Variant.Bound[A]], cases(index).asInstanceOf[Term.Bound[A, B]]))
       } else None
-    }
 
     def toDynamicValue(value: A)(implicit F: HasBinding[F]): DynamicValue = {
       val case_ = cases(discriminator.discriminate(value))
@@ -590,7 +579,7 @@ object Reflect {
 
     def transform[G[_, _]](path: DynamicOptic, f: ReflectTransformer[F, G]): Lazy[Variant[G, A]] =
       for {
-        cases   <- Lazy.foreach(cases.toVector)(_.transform(path, Term.Type.Variant, f))
+        cases   <- Lazy.foreach(cases)(_.transform(path, Term.Type.Variant, f))
         variant <- f.transformVariant(path, cases, typeName, variantBinding, doc, modifiers)
       } yield variant
 
@@ -612,14 +601,13 @@ object Reflect {
     typeName: TypeName[C[A]],
     seqBinding: F[BindingType.Seq[C], C[A]],
     doc: Doc = Doc.Empty,
-    modifiers: Seq[Modifier.Seq] = Nil
+    modifiers: Seq[Modifier.Reflect] = Nil
   ) extends Reflect[F, C[A]] { self =>
     require(element ne null)
 
     protected def inner: Any = (element, typeName, doc, modifiers)
 
-    type NodeBinding  = BindingType.Seq[C]
-    type ModifierType = Modifier.Seq
+    type NodeBinding = BindingType.Seq[C]
 
     def binding(implicit F: HasBinding[F]): Binding[BindingType.Seq[C], C[A]] = F.binding(seqBinding)
 
@@ -758,9 +746,10 @@ object Reflect {
 
     def metadata: F[NodeBinding, C[A]] = seqBinding
 
-    def modifier(modifier: Modifier.Seq): Sequence[F, A, C] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Sequence[F, A, C] = copy(modifiers = modifiers :+ modifier)
 
-    def modifiers(modifiers: Iterable[Modifier.Seq]): Sequence[F, A, C] = copy(modifiers = this.modifiers ++ modifiers)
+    def modifiers(modifiers: Iterable[Modifier.Reflect]): Sequence[F, A, C] =
+      copy(modifiers = this.modifiers ++ modifiers)
 
     def toDynamicValue(value: C[A])(implicit F: HasBinding[F]): DynamicValue = {
       val iterator = seqDeconstructor.deconstruct(value)
@@ -811,14 +800,13 @@ object Reflect {
     typeName: TypeName[M[K, V]],
     mapBinding: F[BindingType.Map[M], M[K, V]],
     doc: Doc = Doc.Empty,
-    modifiers: Seq[Modifier.Map] = Nil
+    modifiers: Seq[Modifier.Reflect] = Nil
   ) extends Reflect[F, M[K, V]] { self =>
     require((key ne null) && (value ne null))
 
     protected def inner: Any = (key, value, typeName, doc, modifiers)
 
-    type NodeBinding  = BindingType.Map[M]
-    type ModifierType = Modifier.Map
+    type NodeBinding = BindingType.Map[M]
 
     def binding(implicit F: HasBinding[F]): Binding[BindingType.Map[M], M[K, V]] = F.binding(mapBinding)
 
@@ -870,9 +858,9 @@ object Reflect {
 
     def metadata: F[NodeBinding, M[K, V]] = mapBinding
 
-    def modifier(modifier: Modifier.Map): Map[F, K, V, M] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Map[F, K, V, M] = copy(modifiers = modifiers :+ modifier)
 
-    def modifiers(modifiers: Iterable[Modifier.Map]): Map[F, K, V, M] =
+    def modifiers(modifiers: Iterable[Modifier.Reflect]): Map[F, K, V, M] =
       copy(modifiers = this.modifiers ++ modifiers)
 
     def toDynamicValue(value: M[K, V])(implicit F: HasBinding[F]): DynamicValue = {
@@ -926,12 +914,11 @@ object Reflect {
     dynamicBinding: F[BindingType.Dynamic, DynamicValue],
     typeName: TypeName[DynamicValue] = TypeName.dynamicValue,
     doc: Doc = Doc.Empty,
-    modifiers: Seq[Modifier.Dynamic] = Nil
+    modifiers: Seq[Modifier.Reflect] = Nil
   ) extends Reflect[F, DynamicValue] {
     protected def inner: Any = (modifiers, doc)
 
-    type NodeBinding  = BindingType.Dynamic
-    type ModifierType = Modifier.Dynamic
+    type NodeBinding = BindingType.Dynamic
 
     def binding(implicit F: HasBinding[F]): Binding[BindingType.Dynamic, DynamicValue] = F.binding(dynamicBinding)
 
@@ -954,9 +941,9 @@ object Reflect {
 
     def metadata: F[NodeBinding, DynamicValue] = dynamicBinding
 
-    def modifier(modifier: ModifierType): Dynamic[F] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Dynamic[F] = copy(modifiers = modifiers :+ modifier)
 
-    def modifiers(modifiers: Iterable[ModifierType]): Dynamic[F] = copy(modifiers = this.modifiers ++ modifiers)
+    def modifiers(modifiers: Iterable[Modifier.Reflect]): Dynamic[F] = copy(modifiers = this.modifiers ++ modifiers)
 
     def toDynamicValue(value: DynamicValue)(implicit F: HasBinding[F]): DynamicValue = value
 
@@ -983,12 +970,11 @@ object Reflect {
     typeName: TypeName[A],
     primitiveBinding: F[BindingType.Primitive, A],
     doc: Doc = Doc.Empty,
-    modifiers: Seq[Modifier.Primitive] = Nil
+    modifiers: Seq[Modifier.Reflect] = Nil
   ) extends Reflect[F, A] { self =>
     protected def inner: Any = (primitiveType, typeName, doc, modifiers)
 
-    type NodeBinding  = BindingType.Primitive
-    type ModifierType = Modifier.Primitive
+    type NodeBinding = BindingType.Primitive
 
     def binding(implicit F: HasBinding[F]): Binding.Primitive[A] = F.primitive(primitiveBinding)
 
@@ -1010,9 +996,9 @@ object Reflect {
 
     def metadata: F[NodeBinding, A] = primitiveBinding
 
-    def modifier(modifier: Modifier.Primitive): Primitive[F, A] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Primitive[F, A] = copy(modifiers = modifiers :+ modifier)
 
-    def modifiers(modifiers: Iterable[Modifier.Primitive]): Primitive[F, A] =
+    def modifiers(modifiers: Iterable[Modifier.Reflect]): Primitive[F, A] =
       copy(modifiers = this.modifiers ++ modifiers)
 
     def toDynamicValue(value: A)(implicit F: HasBinding[F]): DynamicValue = primitiveType.toDynamicValue(value)
@@ -1040,12 +1026,11 @@ object Reflect {
     typeName: TypeName[A],
     wrapperBinding: F[BindingType.Wrapper[A, B], A],
     doc: Doc = Doc.Empty,
-    modifiers: Seq[Modifier.Wrapper] = Nil
+    modifiers: Seq[Modifier.Reflect] = Nil
   ) extends Reflect[F, A] { self =>
     protected def inner: Any = (wrapped, typeName, doc, modifiers)
 
-    type NodeBinding  = BindingType.Wrapper[A, B]
-    type ModifierType = Modifier.Wrapper
+    type NodeBinding = BindingType.Wrapper[A, B]
 
     def binding(implicit F: HasBinding[F]): Binding.Wrapper[A, B] = F.wrapper(wrapperBinding)
 
@@ -1075,9 +1060,9 @@ object Reflect {
 
     def metadata: F[NodeBinding, A] = wrapperBinding
 
-    def modifier(modifier: Modifier.Wrapper): Wrapper[F, A, B] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Wrapper[F, A, B] = copy(modifiers = modifiers :+ modifier)
 
-    def modifiers(modifiers: Iterable[Modifier.Wrapper]): Wrapper[F, A, B] =
+    def modifiers(modifiers: Iterable[Modifier.Reflect]): Wrapper[F, A, B] =
       copy(modifiers = this.modifiers ++ modifiers)
 
     def toDynamicValue(value: A)(implicit F: HasBinding[F]): DynamicValue =
@@ -1116,8 +1101,7 @@ object Reflect {
 
     final lazy val value: Reflect[F, A] = _value()
 
-    type NodeBinding  = value.NodeBinding
-    type ModifierType = value.ModifierType
+    type NodeBinding = value.NodeBinding
 
     def binding(implicit F: HasBinding[F]): Binding[NodeBinding, A] = value.binding
 
@@ -1139,11 +1123,12 @@ object Reflect {
 
     def metadata: F[NodeBinding, A] = value.metadata
 
-    def modifiers: Seq[ModifierType] = value.modifiers
+    def modifiers: Seq[Modifier.Reflect] = value.modifiers
 
-    def modifier(modifier: ModifierType): Deferred[F, A] = copy(_value = () => value.modifier(modifier))
+    def modifier(modifier: Modifier.Reflect): Deferred[F, A] = copy(_value = () => value.modifier(modifier))
 
-    def modifiers(modifiers: Iterable[ModifierType]): Deferred[F, A] = copy(_value = () => value.modifiers(modifiers))
+    def modifiers(modifiers: Iterable[Modifier.Reflect]): Deferred[F, A] =
+      copy(_value = () => value.modifiers(modifiers))
 
     def doc: Doc = value.doc
 
@@ -1175,7 +1160,7 @@ object Reflect {
     }
 
     override def equals(obj: Any): Boolean = obj match {
-      case that: Reflect[_, _] =>
+      case that: Reflect[?, ?] =>
         (this eq that) || {
           val v = visited.get
           if (v.containsKey(this)) true // exit from recursion
@@ -1541,70 +1526,70 @@ object Reflect {
 
   def option[F[_, _], A <: AnyRef](element: Reflect[F, A])(implicit F: FromBinding[F]): Variant[F, Option[A]] =
     new Variant(
-      Vector(new Term("Some", some(element)), new Term("None", none)),
+      Vector(new Term("None", none), new Term("Some", some(element))),
       TypeName.option(element.typeName),
       F.fromBinding(Binding.Variant.option)
     )
 
   def optionDouble[F[_, _]](element: Reflect[F, Double])(implicit F: FromBinding[F]): Variant[F, Option[Double]] =
     new Variant(
-      Vector(new Term("Some", someDouble(element)), new Term("None", none)),
+      Vector(new Term("None", none), new Term("Some", someDouble(element))),
       TypeName.option(element.typeName),
       F.fromBinding(Binding.Variant.option)
     )
 
   def optionLong[F[_, _]](element: Reflect[F, Long])(implicit F: FromBinding[F]): Variant[F, Option[Long]] =
     new Variant(
-      Vector(new Term("Some", someLong(element)), new Term("None", none)),
+      Vector(new Term("None", none), new Term("Some", someLong(element))),
       TypeName.option(element.typeName),
       F.fromBinding(Binding.Variant.option)
     )
 
   def optionFloat[F[_, _]](element: Reflect[F, Float])(implicit F: FromBinding[F]): Variant[F, Option[Float]] =
     new Variant(
-      Vector(new Term("Some", someFloat(element)), new Term("None", none)),
+      Vector(new Term("None", none), new Term("Some", someFloat(element))),
       TypeName.option(element.typeName),
       F.fromBinding(Binding.Variant.option)
     )
 
   def optionInt[F[_, _]](element: Reflect[F, Int])(implicit F: FromBinding[F]): Variant[F, Option[Int]] =
     new Variant(
-      Vector(new Term("Some", someInt(element)), new Term("None", none)),
+      Vector(new Term("None", none), new Term("Some", someInt(element))),
       TypeName.option(element.typeName),
       F.fromBinding(Binding.Variant.option)
     )
 
   def optionChar[F[_, _]](element: Reflect[F, Char])(implicit F: FromBinding[F]): Variant[F, Option[Char]] =
     new Variant(
-      Vector(new Term("Some", someChar(element)), new Term("None", none)),
+      Vector(new Term("None", none), new Term("Some", someChar(element))),
       TypeName.option(element.typeName),
       F.fromBinding(Binding.Variant.option)
     )
 
   def optionShort[F[_, _]](element: Reflect[F, Short])(implicit F: FromBinding[F]): Variant[F, Option[Short]] =
     new Variant(
-      Vector(new Term("Some", someShort(element)), new Term("None", none)),
+      Vector(new Term("None", none), new Term("Some", someShort(element))),
       TypeName.option(element.typeName),
       F.fromBinding(Binding.Variant.option)
     )
 
   def optionBoolean[F[_, _]](element: Reflect[F, Boolean])(implicit F: FromBinding[F]): Variant[F, Option[Boolean]] =
     new Variant(
-      Vector(new Term("Some", someBoolean(element)), new Term("None", none)),
+      Vector(new Term("None", none), new Term("Some", someBoolean(element))),
       TypeName.option(element.typeName),
       F.fromBinding(Binding.Variant.option)
     )
 
   def optionByte[F[_, _]](element: Reflect[F, Byte])(implicit F: FromBinding[F]): Variant[F, Option[Byte]] =
     new Variant(
-      Vector(new Term("Some", someByte(element)), new Term("None", none)),
+      Vector(new Term("None", none), new Term("Some", someByte(element))),
       TypeName.option(element.typeName),
       F.fromBinding(Binding.Variant.option)
     )
 
   def optionUnit[F[_, _]](element: Reflect[F, Unit])(implicit F: FromBinding[F]): Variant[F, Option[Unit]] =
     new Variant(
-      Vector(new Term("Some", someUnit(element)), new Term("None", none)),
+      Vector(new Term("None", none), new Term("Some", someUnit(element))),
       TypeName.option(element.typeName),
       F.fromBinding(Binding.Variant.option)
     )
@@ -1663,7 +1648,7 @@ object Reflect {
   }
 
   private class StringToIntMap(size: Int) {
-    private[this] val mask   = (Integer.highestOneBit(size) << 2) - 1
+    private[this] val mask   = (Integer.highestOneBit(size | 1) << 2) - 1
     private[this] val keys   = new Array[String](mask + 1)
     private[this] val values = new Array[Int](mask + 1)
 
