@@ -1,0 +1,49 @@
+{
+    "name": "zio-blocks",
+    "build": {
+        "dockerfile": "Dockerfile",
+        "context": "..",
+        "args": {
+            "USER_UID": "1000",
+            "USER_GID": "1000",
+            "USERNAME": "vscode"
+        }
+    },
+    "remoteUser": "vscode",
+    "workspaceFolder": "/workspaces/zio-blocks",
+    "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/zio-blocks,type=bind,consistency=cached",
+    "mounts": [
+        "source=zio-blocks-ivy2,target=/home/vscode/.ivy2,type=volume",
+        "source=zio-blocks-sbt,target=/home/vscode/.sbt,type=volume",
+        "source=zio-blocks-coursier,target=/home/vscode/.local/share/coursier,type=volume",
+        "source=zio-blocks-cs-cache,target=/home/vscode/.cache/coursier,type=volume"
+    ],
+    "containerEnv": {
+        "SBT_OPTS": "-Xms1G -Xmx3G -XX:+UseG1GC -XX:MaxGCPauseMillis=100 -Dsbt.log.noformat=true -Dsbt.color=false -Dsbt.server.autostart=false",
+        "JAVA_OPTS": "-Xms512m -Xmx2g"
+    },
+    "forwardPorts": [
+        8212
+    ],
+    "overrideCommand": false,
+    "postCreateCommand": "bash -lc 'cs setup -y && sbt -batch bloopInstall || true'",
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "scalameta.metals",
+                "scala-lang.scala",
+                "lightbend.vscode-sbt-scala",
+                "EditorConfig.EditorConfig"
+            ],
+            "settings": {
+                "files.watcherExclude": {
+                    "**/target/**": true,
+                    "**/.bloop/**": true,
+                    "**/.metals/**": true,
+                    "**/.ammonite/**": true
+                },
+                "terminal.integrated.defaultProfile.linux": "bash"
+            }
+        }
+    }
+}
