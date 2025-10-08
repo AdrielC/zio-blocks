@@ -728,6 +728,13 @@ object JsonSchema {
         case _                             => Reflect.string[Binding].noBinding
       }
 
+    def traverseEither[A1, B1](
+      values: Iterable[A1]
+    )(f: A1 => Either[SchemaError, B1]): Either[SchemaError, Vector[B1]] =
+      values.foldLeft[Either[SchemaError, Vector[B1]]](Right(Vector.empty)) { (accEither, value) =>
+        accEither.flatMap(acc => f(value).map(acc :+ _))
+      }
+
     def parseObject[A](
       rec: ArraySeq[(String, DynamicValue)],
       defs: Map[String, DynamicValue]
@@ -744,36 +751,18 @@ object JsonSchema {
 
       val defsOut = defs ++ defs2
 
-      val required = get(rec, "required").flatMap(asString)
-
-      val terms = props.map { case (name, schemaDv) =>
-        // use required to fail if available
-        if (required.contains(name)) {
-          dynamicValueToReflect(schemaDv, defsOut) match {
-            case Right(fv) => Right(Term(name, fv, doc, Nil))
-            case Left(e)   => Left(e)
-          }
-        } else {
-          dynamicValueToReflect(schemaDv, defsOut) match {
-            case Right(fv) => Right(Term(name, fv, doc, Nil))
-            case Left(e)   => Left(e)
-          }
+      traverseEither(props) { case (name, schemaDv) =>
+        dynamicValueToReflect(schemaDv, defsOut).map { fv =>
+          Term[NoBinding, A, Any](name, fv.asInstanceOf[Reflect[NoBinding, Any]], doc, Nil)
         }
-      }
-
-      val firstErr = terms.collectFirst { case Left(e) => e }
-      firstErr match {
-        case Some(e) => Left(e)
-        case None    =>
-          val fields = terms.collect { case Right(t) => t }.toIndexedSeq
-          Right(
-            Reflect.Record(
-              fields.asInstanceOf[IndexedSeq[Term[NoBinding, A, ?]]],
-              tn.asInstanceOf[TypeName[A]],
-              binding.NoBinding(),
-              doc,
-              Nil
-            )
+      }.map { fields =>
+        Reflect
+          .Record(
+            fields.toIndexedSeq.asInstanceOf[IndexedSeq[Term[NoBinding, A, ?]]],
+            tn.asInstanceOf[TypeName[A]],
+            binding.NoBinding(),
+            doc,
+            Nil
           )
       }
     }
@@ -782,29 +771,24 @@ object JsonSchema {
       rec: ArraySeq[(String, DynamicValue)],
       defs: Map[String, DynamicValue]
     )(implicit config: JsonSchemaConfig): Either[SchemaError, Reflect[NoBinding, Any]] =
-      get(rec, "items") match {
-        case Some(itemsDv) =>
-          dynamicValueToReflect(itemsDv, defs) match {
-            case Right(elem) =>
-              val tn = get(rec, config.typeNameKey)
-                .flatMap(asString)
-                .map(parseTypeName)
-                .getOrElse(TypeName[Any](Namespace(Nil), "Unit"))
-              Right(
-                Reflect
-                  .Sequence[NoBinding, Any, List](
-                    elem.asInstanceOf[Reflect[NoBinding, Any]],
-                    tn.asInstanceOf[TypeName[List[Any]]],
-                    binding.NoBinding(),
-                    Doc.Empty,
-                    Nil
-                  )
-                  .asInstanceOf[Reflect[NoBinding, Any]]
-              )
-            case Left(e) => Left(e)
-          }
-        case None => Left(SchemaError.invalidType(Nil, "array items missing"))
-      }
+      (for {
+        itemsDv <- get(rec, "items").toRight(SchemaError.invalidType(Nil, "array items missing"))
+        elem    <- dynamicValueToReflect(itemsDv, defs)
+      } yield {
+        val tn = get(rec, config.typeNameKey)
+          .flatMap(asString)
+          .map(parseTypeName)
+          .getOrElse(TypeName[Any](Namespace(Nil), "Unit"))
+        Reflect
+          .Sequence[NoBinding, Any, List](
+            elem.asInstanceOf[Reflect[NoBinding, Any]],
+            tn.asInstanceOf[TypeName[List[Any]]],
+            binding.NoBinding(),
+            Doc.Empty,
+            Nil
+          )
+          .asInstanceOf[Reflect[NoBinding, Any]]
+      })
 
     def parseOneOf(
       rec: ArraySeq[(String, DynamicValue)],
@@ -812,47 +796,44 @@ object JsonSchema {
     )(implicit config: JsonSchemaConfig): Either[SchemaError, Reflect[NoBinding, Any]] =
       get(rec, "oneOf") match {
         case Some(DynamicValue.Sequence(alts)) =>
-          val parsed =
-            alts.map {
-              case DynamicValue.Record(f) =>
-                val tag = for {
-                  propsDv <- get(ArraySeq.from(f), "properties")
-                  props   <- fieldsOf(propsDv)
-                  tagRec  <- get(props, "tag").flatMap(fieldsOf)
-                  const    = get(tagRec, "const").flatMap(asString)
-                } yield const.getOrElse("case")
-                val valueSchema = for {
-                  propsDv <- get(ArraySeq.from(f), "properties")
-                  props   <- fieldsOf(propsDv)
-                  v       <- get(props, "value")
-                } yield v
-                (tag, valueSchema) match {
-                  case (Some(name), Some(vdv)) =>
-                    dynamicValueToReflect(vdv, defs) match {
-                      case Right(rv) => Right(Term(name, rv, Doc.Empty, Nil))
-                      case Left(e)   => Left(e)
-                    }
-                  case _ => Left(SchemaError.invalidType(Nil, "invalid oneOf alternative"))
-                }
-              case _ => Left(SchemaError.invalidType(Nil, "invalid oneOf alternative"))
-            }
+          val invalidAlt = SchemaError.invalidType(Nil, "invalid oneOf alternative")
+          traverseEither(alts) {
+            case DynamicValue.Record(f) =>
+              val entries = ArraySeq.from(f)
+              val propsOpt = for {
+                propsDv <- get(entries, "properties")
+                props   <- fieldsOf(propsDv)
+              } yield props
 
-          val firstErr = parsed.collectFirst { case Left(e) => e }
-          firstErr match {
-            case Some(e) => Left(e)
-            case None    =>
+              propsOpt match {
+                case Some(props) =>
+                  val tagName = get(props, "tag")
+                    .flatMap(fieldsOf)
+                    .map(tagRec => get(tagRec, "const").flatMap(asString).getOrElse("case"))
+                  val valueSchema = get(props, "value")
+                  (tagName, valueSchema) match {
+                    case (Some(name), Some(vdv)) =>
+                      dynamicValueToReflect(vdv, defs).map { rv =>
+                        Term[NoBinding, Any, Any](name, rv.asInstanceOf[Reflect[NoBinding, Any]], Doc.Empty, Nil)
+                      }
+                    case _ => Left(invalidAlt)
+                  }
+                case None => Left(invalidAlt)
+              }
+            case _ => Left(invalidAlt)
+          }.map { cases =>
+            val tn = get(rec, config.typeNameKey)
+              .flatMap(asString)
+              .map(parseTypeName)
+              .getOrElse(TypeName[Any](Namespace(Nil), "Variant"))
 
-              val tn = get(rec, config.typeNameKey)
-                .flatMap(asString)
-                .map(parseTypeName)
-                .getOrElse(TypeName[Any](Namespace(Nil), "Variant"))
-
-              val cases = parsed.collect { case Right(t) => t }.toIndexedSeq
-                .asInstanceOf[IndexedSeq[Term[NoBinding, Any, ? <: Any]]]
-
-              Right(
-                Reflect
-                  .Variant[NoBinding, Any](cases, tn.asInstanceOf[TypeName[Any]], binding.NoBinding(), Doc.Empty, Nil)
+            Reflect
+              .Variant[NoBinding, Any](
+                cases.toIndexedSeq.asInstanceOf[IndexedSeq[Term[NoBinding, Any, ? <: Any]]],
+                tn.asInstanceOf[TypeName[Any]],
+                binding.NoBinding(),
+                Doc.Empty,
+                Nil
               )
           }
 
@@ -896,30 +877,26 @@ object JsonSchema {
             // Wrapper and Dynamic support via nodeTypeKey
             nodeType match {
               case Some("wrapper") =>
-                get(root, config.wrappedKey) match {
-                  case Some(wrapped) =>
-                    dynamicValueToReflect(wrapped, defsOut) match {
-                      case Right(inner) =>
-                        val tn = get(root, config.typeNameKey)
-                          .flatMap(asString)
-                          .map(parseTypeName)
-                          .getOrElse(TypeName[Any](Namespace(Nil), "Wrapper"))
-                          .asInstanceOf[TypeName[Any]]
-                        Right(
-                          Reflect
-                            .Wrapper[NoBinding, Any, Any](
-                              inner.asInstanceOf[Reflect[NoBinding, Any]],
-                              tn.asInstanceOf[TypeName[Any]],
-                              binding.NoBinding(),
-                              Doc.Empty,
-                              Nil
-                            )
-                            .asInstanceOf[Reflect[NoBinding, Any]]
-                        )
-                      case Left(e) => Left(e)
-                    }
-                  case None => Left(SchemaError.invalidType(Nil, "wrapper missing wrapped"))
-                }
+                (for {
+                  wrapped <- get(root, config.wrappedKey)
+                    .toRight(SchemaError.invalidType(Nil, "wrapper missing wrapped"))
+                  inner <- dynamicValueToReflect(wrapped, defsOut)
+                } yield {
+                  val tn = get(root, config.typeNameKey)
+                    .flatMap(asString)
+                    .map(parseTypeName)
+                    .getOrElse(TypeName[Any](Namespace(Nil), "Wrapper"))
+                    .asInstanceOf[TypeName[Any]]
+                  Reflect
+                    .Wrapper[NoBinding, Any, Any](
+                      inner.asInstanceOf[Reflect[NoBinding, Any]],
+                      tn.asInstanceOf[TypeName[Any]],
+                      binding.NoBinding(),
+                      Doc.Empty,
+                      Nil
+                    )
+                    .asInstanceOf[Reflect[NoBinding, Any]]
+                })
               case Some("dynamic") => Right(Reflect.Dynamic(binding.NoBinding()))
               case Some("record")  => parseObject(root, defsOut)
               case Some("variant") => parseOneOf(root, defsOut)
@@ -929,26 +906,22 @@ object JsonSchema {
                     // Detect map via additionalProperties when properties are absent
                     (get(root, "properties"), get(root, "additionalProperties")) match {
                       case (None | Some(DynamicValue.Record(ArraySeq())), Some(ap)) =>
-                        dynamicValueToReflect(ap, defsOut) match {
-                          case Right(valueRefl) =>
-                            val keyRefl = Reflect.string[Binding].noBinding.asInstanceOf[Reflect[NoBinding, Any]]
-                            val tn      = get(root, config.typeNameKey)
-                              .flatMap(asString)
-                              .map(parseTypeName)
-                              .getOrElse(TypeName[Any](Namespace(Nil), "Unit"))
-                            Right(
-                              Reflect
-                                .Map[NoBinding, Any, Any, collection.immutable.Map](
-                                  keyRefl,
-                                  valueRefl.asInstanceOf[Reflect[NoBinding, Any]],
-                                  tn.asInstanceOf[TypeName[collection.immutable.Map[Any, Any]]],
-                                  binding.NoBinding(),
-                                  Doc.Empty,
-                                  Nil
-                                )
-                                .asInstanceOf[Reflect[NoBinding, Any]]
+                        dynamicValueToReflect(ap, defsOut).map { valueRefl =>
+                          val keyRefl = Reflect.string[Binding].noBinding.asInstanceOf[Reflect[NoBinding, Any]]
+                          val tn      = get(root, config.typeNameKey)
+                            .flatMap(asString)
+                            .map(parseTypeName)
+                            .getOrElse(TypeName[Any](Namespace(Nil), "Unit"))
+                          Reflect
+                            .Map[NoBinding, Any, Any, collection.immutable.Map](
+                              keyRefl,
+                              valueRefl.asInstanceOf[Reflect[NoBinding, Any]],
+                              tn.asInstanceOf[TypeName[collection.immutable.Map[Any, Any]]],
+                              binding.NoBinding(),
+                              Doc.Empty,
+                              Nil
                             )
-                          case Left(e) => Left(e)
+                            .asInstanceOf[Reflect[NoBinding, Any]]
                         }
                       case _ => parseObject(root, defsOut)
                     }
