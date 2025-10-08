@@ -2,7 +2,7 @@ package zio.blocks.schema
 
 import scala.collection.immutable.ArraySeq
 import zio.blocks.schema.PrimitiveValue
-import zio.blocks.schema.binding.{Binding, NoBinding}
+import zio.blocks.schema.binding.{Binding, BindingType, NoBinding}
 import zio.blocks.schema.{Namespace, TypeName}
 import zio.blocks.schema.json.{JsonSchema, JsonSchemaConfig}
 import zio.test.Assertion._
@@ -93,7 +93,7 @@ object ReflectJsonSchemaSpec extends ZIOSpecDefault {
     Reflect.Wrapper(
       intSchema,
       TypeName(exampleNamespace, "Age"),
-      NoBinding()
+      NoBinding[BindingType.Wrapper[Age, Int], Age]()
     )
 
   private val personSchemaJson: DynamicValue =
