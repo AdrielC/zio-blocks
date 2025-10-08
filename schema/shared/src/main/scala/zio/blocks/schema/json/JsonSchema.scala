@@ -749,7 +749,7 @@ object JsonSchema {
         .getOrElse(TypeName[A](Namespace(Nil), "Object"))
       val doc = description.map(Doc.Text(_)).getOrElse(Doc.Empty)
 
-      val defsOut = defs ++ defs2
+      val defsOut      = defs ++ defs2
       val propertiesDv =
         get(entries, "properties").flatMap(fieldsOf).getOrElse(ArraySeq.empty[(String, DynamicValue)])
 
@@ -801,7 +801,7 @@ object JsonSchema {
           val invalidAlt = SchemaError.invalidType(Nil, "invalid oneOf alternative")
           traverseEither(alts) {
             case DynamicValue.Record(f) =>
-              val entries = ArraySeq.from(f)
+              val entries  = ArraySeq.from(f)
               val propsOpt = for {
                 propsDv <- get(entries, "properties")
                 props   <- fieldsOf(propsDv)
@@ -881,7 +881,7 @@ object JsonSchema {
               case Some("wrapper") =>
                 (for {
                   wrapped <- get(root, config.wrappedKey)
-                    .toRight(SchemaError.invalidType(Nil, "wrapper missing wrapped"))
+                               .toRight(SchemaError.invalidType(Nil, "wrapper missing wrapped"))
                   inner <- dynamicValueToReflect(wrapped, defsOut)
                 } yield {
                   val tn = get(root, config.typeNameKey)
