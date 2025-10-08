@@ -739,10 +739,10 @@ object JsonSchema {
       rec: ArraySeq[(String, DynamicValue)],
       defs: Map[String, DynamicValue]
     )(implicit config: JsonSchemaConfig): Either[SchemaError, Reflect[NoBinding, A]] = {
-      val (props, defs2) = stripDefs(rec)
-      val title          = get(rec, "title").flatMap(asString)
-      val description    = get(rec, "description").flatMap(asString)
-      val tn             = get(rec, config.typeNameKey)
+      val (entries, defs2) = stripDefs(rec)
+      val title            = get(entries, "title").flatMap(asString)
+      val description      = get(entries, "description").flatMap(asString)
+      val tn               = get(entries, config.typeNameKey)
         .flatMap(asString)
         .map(parseTypeName)
         .orElse(title.map(parseTypeName))
@@ -750,8 +750,10 @@ object JsonSchema {
       val doc = description.map(Doc.Text(_)).getOrElse(Doc.Empty)
 
       val defsOut = defs ++ defs2
+      val propertiesDv =
+        get(entries, "properties").flatMap(fieldsOf).getOrElse(ArraySeq.empty[(String, DynamicValue)])
 
-      traverseEither(props) { case (name, schemaDv) =>
+      traverseEither(propertiesDv) { case (name, schemaDv) =>
         dynamicValueToReflect(schemaDv, defsOut).map { fv =>
           Term[NoBinding, A, Any](name, fv.asInstanceOf[Reflect[NoBinding, Any]], doc, Nil)
         }
