@@ -99,46 +99,46 @@ object ReflectJsonSchemaSpec extends ZIOSpecDefault {
   private val personSchemaJson: DynamicValue =
     DynamicValue.Record(
       ArraySeq(
-        "type"              -> dvString("object"),
-        config.nodeTypeKey   -> dvString("record"),
-        config.typeNameKey   -> dvString("example.Person"),
-        "properties"        -> DynamicValue.Record(
+        "type"             -> dvString("object"),
+        config.nodeTypeKey -> dvString("record"),
+        config.typeNameKey -> dvString("example.Person"),
+        "properties"       -> DynamicValue.Record(
           ArraySeq(
             "name" -> DynamicValue.Record(ArraySeq("type" -> dvString("string"))),
             "age"  -> DynamicValue.Record(ArraySeq("type" -> dvString("integer")))
           )
         ),
-        "required"          -> DynamicValue.Sequence(ArraySeq(dvString("name"), dvString("age")))
+        "required" -> DynamicValue.Sequence(ArraySeq(dvString("name"), dvString("age")))
       )
     )
 
   private val dogSchemaJson: DynamicValue =
     DynamicValue.Record(
       ArraySeq(
-        "type"              -> dvString("object"),
-        config.nodeTypeKey   -> dvString("record"),
-        config.typeNameKey   -> dvString("example.Dog"),
-        "properties"        -> DynamicValue.Record(
+        "type"             -> dvString("object"),
+        config.nodeTypeKey -> dvString("record"),
+        config.typeNameKey -> dvString("example.Dog"),
+        "properties"       -> DynamicValue.Record(
           ArraySeq(
             "age" -> DynamicValue.Record(ArraySeq("type" -> dvString("integer")))
           )
         ),
-        "required"          -> DynamicValue.Sequence(ArraySeq(dvString("age")))
+        "required" -> DynamicValue.Sequence(ArraySeq(dvString("age")))
       )
     )
 
   private val catSchemaJson: DynamicValue =
     DynamicValue.Record(
       ArraySeq(
-        "type"              -> dvString("object"),
-        config.nodeTypeKey   -> dvString("record"),
-        config.typeNameKey   -> dvString("example.Cat"),
-        "properties"        -> DynamicValue.Record(
+        "type"             -> dvString("object"),
+        config.nodeTypeKey -> dvString("record"),
+        config.typeNameKey -> dvString("example.Cat"),
+        "properties"       -> DynamicValue.Record(
           ArraySeq(
             "name" -> DynamicValue.Record(ArraySeq("type" -> dvString("string")))
           )
         ),
-        "required"          -> DynamicValue.Sequence(ArraySeq(dvString("name")))
+        "required" -> DynamicValue.Sequence(ArraySeq(dvString("name")))
       )
     )
 
@@ -152,7 +152,7 @@ object ReflectJsonSchemaSpec extends ZIOSpecDefault {
             "value" -> valueSchema
           )
         ),
-        "required"   -> DynamicValue.Sequence(ArraySeq(dvString("tag"), dvString("value")))
+        "required" -> DynamicValue.Sequence(ArraySeq(dvString("tag"), dvString("value")))
       )
     )
 
@@ -161,7 +161,7 @@ object ReflectJsonSchemaSpec extends ZIOSpecDefault {
       ArraySeq(
         config.nodeTypeKey -> dvString("variant"),
         config.typeNameKey -> dvString("example.Animal"),
-        "oneOf"           -> DynamicValue.Sequence(
+        "oneOf"            -> DynamicValue.Sequence(
           ArraySeq(
             variantAlternative("Dog", dogSchemaJson),
             variantAlternative("Cat", catSchemaJson)
@@ -173,8 +173,8 @@ object ReflectJsonSchemaSpec extends ZIOSpecDefault {
   private val listOfIntSchemaJson: DynamicValue =
     DynamicValue.Record(
       ArraySeq(
-        "type"            -> dvString("array"),
-        "items"           -> DynamicValue.Record(ArraySeq("type" -> dvString("integer"))),
+        "type"             -> dvString("array"),
+        "items"            -> DynamicValue.Record(ArraySeq("type" -> dvString("integer"))),
         config.nodeTypeKey -> dvString("sequence"),
         config.typeNameKey -> dvString("scala.collection.immutable.List")
       )
@@ -183,11 +183,11 @@ object ReflectJsonSchemaSpec extends ZIOSpecDefault {
   private val mapSchemaJson: DynamicValue =
     DynamicValue.Record(
       ArraySeq(
-        "type"                   -> dvString("object"),
-        "additionalProperties"   -> DynamicValue.Record(ArraySeq("type" -> dvString("integer"))),
-        config.nodeTypeKey        -> dvString("map"),
-        config.typeNameKey        -> dvString("scala.collection.immutable.Map"),
-        config.keyKey             -> DynamicValue.Record(ArraySeq("type" -> dvString("string")))
+        "type"                 -> dvString("object"),
+        "additionalProperties" -> DynamicValue.Record(ArraySeq("type" -> dvString("integer"))),
+        config.nodeTypeKey     -> dvString("map"),
+        config.typeNameKey     -> dvString("scala.collection.immutable.Map"),
+        config.keyKey          -> DynamicValue.Record(ArraySeq("type" -> dvString("string")))
       )
     )
 
@@ -265,11 +265,11 @@ object ReflectJsonSchemaSpec extends ZIOSpecDefault {
         assert(result)(isLeft(equalTo(SchemaError.invalidType(Nil, "array items missing"))))
       },
       test("oneOf alternative without value schema fails") {
-        val config      = JsonSchemaConfig.default
-        val invalidAlt  = DynamicValue.Record(ArraySeq("type" -> dvString("object")))
+        val config        = JsonSchemaConfig.default
+        val invalidAlt    = DynamicValue.Record(ArraySeq("type" -> dvString("object")))
         val variantSchema = DynamicValue.Record(
           ArraySeq(
-            "oneOf"           -> DynamicValue.Sequence(ArraySeq(invalidAlt)),
+            "oneOf"            -> DynamicValue.Sequence(ArraySeq(invalidAlt)),
             config.nodeTypeKey -> dvString("variant")
           )
         )
