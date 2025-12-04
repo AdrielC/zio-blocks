@@ -39,6 +39,7 @@ lazy val root = project
     streams.jvm,
     streams.js,
     streams.native,
+    avro,
     scalaNextTests.jvm,
     scalaNextTests.js,
     scalaNextTests.native,
@@ -49,7 +50,7 @@ lazy val schema = crossProject(JSPlatform, JVMPlatform, NativePlatform)
   .crossType(CrossType.Full)
   .settings(stdSettings("zio-blocks-schema"))
   .settings(crossProjectSettings)
-  .settings(buildInfoSettings("zio.blocks"))
+  .settings(buildInfoSettings("zio.blocks.schema"))
   .enablePlugins(BuildInfoPlugin)
   .jvmSettings(mimaSettings(failOnProblem = false))
   .jsSettings(jsSettings)
@@ -57,9 +58,9 @@ lazy val schema = crossProject(JSPlatform, JVMPlatform, NativePlatform)
   .settings(
     compileOrder := CompileOrder.JavaThenScala,
     libraryDependencies ++= Seq(
-      "dev.zio" %%% "zio-prelude"  % "1.0.0-RC41" % Test,
-      "dev.zio" %%% "zio-test"     % "2.1.21"     % Test,
-      "dev.zio" %%% "zio-test-sbt" % "2.1.21"     % Test
+      "dev.zio" %%% "zio-prelude"  % "1.0.0-RC44" % Test,
+      "dev.zio" %%% "zio-test"     % "2.1.23"     % Test,
+      "dev.zio" %%% "zio-test-sbt" % "2.1.23"     % Test
     ) ++ (CrossVersion.partialVersion(scalaVersion.value) match {
       case Some((2, _)) =>
         Seq(
@@ -75,7 +76,7 @@ lazy val schema = crossProject(JSPlatform, JVMPlatform, NativePlatform)
         Seq()
       case _ =>
         Seq(
-          "io.github.kitlangton" %%% "neotype" % "0.3.25" % Test
+          "io.github.kitlangton" %%% "neotype" % "0.3.36" % Test
         )
     })
   )
@@ -88,7 +89,7 @@ lazy val schema = crossProject(JSPlatform, JVMPlatform, NativePlatform)
         Seq()
       case _ =>
         Seq(
-          "io.github.kitlangton" %%% "neotype" % "0.3.25" % Test
+          "io.github.kitlangton" %%% "neotype" % "0.3.36" % Test
         )
     })
   )
@@ -103,29 +104,40 @@ lazy val streams = crossProject(JSPlatform, JVMPlatform, NativePlatform)
   .crossType(CrossType.Pure)
   .settings(stdSettings("zio-blocks-streams"))
   .settings(crossProjectSettings)
-  .settings(buildInfoSettings("zio.blocks"))
+  .settings(buildInfoSettings("zio.blocks.streams"))
   .enablePlugins(BuildInfoPlugin)
   .jvmSettings(mimaSettings(failOnProblem = false))
   .jsSettings(jsSettings)
   .nativeSettings(nativeSettings)
   .settings(
     libraryDependencies ++= Seq(
-      "dev.zio" %%% "zio-test"     % "2.1.21" % Test,
-      "dev.zio" %%% "zio-test-sbt" % "2.1.21" % Test
+      "dev.zio" %%% "zio-test"     % "2.1.23" % Test,
+      "dev.zio" %%% "zio-test-sbt" % "2.1.23" % Test
+    )
+  )
+
+lazy val avro = project
+  .settings(stdSettings("zio-blocks-avro"))
+  .dependsOn(schema.jvm)
+  .settings(buildInfoSettings("zio.blocks.avro"))
+  .enablePlugins(BuildInfoPlugin)
+  .settings(
+    libraryDependencies ++= Seq(
+      "org.apache.avro" % "avro"         % "1.12.1",
+      "dev.zio"        %% "zio-test"     % "2.1.23" % Test,
+      "dev.zio"        %% "zio-test-sbt" % "2.1.23" % Test
     )
   )
 
 lazy val scalaNextTests = crossProject(JSPlatform, JVMPlatform, NativePlatform)
   .crossType(CrossType.Pure)
+  .settings(stdSettings("zio-blocks-scala-next-tests", Seq("3.7.4")))
   .dependsOn(schema)
-  .settings(stdSettings("zio-blocks-scala-next-tests"))
   .settings(crossProjectSettings)
   .settings(
-    crossScalaVersions       := Seq("3.7.3"),
-    ThisBuild / scalaVersion := "3.7.3",
     libraryDependencies ++= Seq(
-      "dev.zio" %%% "zio-test"     % "2.1.21" % Test,
-      "dev.zio" %%% "zio-test-sbt" % "2.1.21" % Test
+      "dev.zio" %%% "zio-test"     % "2.1.23" % Test,
+      "dev.zio" %%% "zio-test-sbt" % "2.1.23" % Test
     ),
     publish / skip        := true,
     mimaPreviousArtifacts := Set()
@@ -134,24 +146,27 @@ lazy val scalaNextTests = crossProject(JSPlatform, JVMPlatform, NativePlatform)
   .nativeSettings(nativeSettings)
 
 lazy val benchmarks = project
+  .settings(stdSettings("zio-blocks-benchmarks", Seq("3.7.4")))
   .dependsOn(schema.jvm)
-  .settings(stdSettings("zio-blocks-benchmarks"))
+  .dependsOn(avro)
   .enablePlugins(JmhPlugin)
   .settings(
-    crossScalaVersions       := Seq("3.7.3"),
-    ThisBuild / scalaVersion := "3.7.3",
     libraryDependencies ++= Seq(
-      "io.github.arainko"          %% "chanterelle"   % "0.1.1",
-      "com.softwaremill.quicklens" %% "quicklens"     % "1.9.12",
-      "dev.optics"                 %% "monocle-core"  % "3.3.0",
-      "dev.optics"                 %% "monocle-macro" % "3.3.0",
-      "dev.zio"                    %% "zio-test"      % "2.1.21" % Test,
-      "dev.zio"                    %% "zio-test-sbt"  % "2.1.21" % Test
+      "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.38.5",
+      "com.sksamuel.avro4s"                   %% "avro4s-core"           % "5.0.14",
+      "dev.zio"                               %% "zio-json"              % "0.7.45",
+      "dev.zio"                               %% "zio-schema-avro"       % "1.7.5",
+      "io.github.arainko"                     %% "chanterelle"           % "0.1.1",
+      "com.softwaremill.quicklens"            %% "quicklens"             % "1.9.12",
+      "dev.optics"                            %% "monocle-core"          % "3.3.0",
+      "dev.optics"                            %% "monocle-macro"         % "3.3.0",
+      "dev.zio"                               %% "zio-test"              % "2.1.23",
+      "dev.zio"                               %% "zio-test-sbt"          % "2.1.23" % Test
     ),
     assembly / assemblyJarName       := "benchmarks.jar",
     assembly / assemblyMergeStrategy := {
-      case PathList("module-info.class") => MergeStrategy.discard
-      case path                          => MergeStrategy.defaultMergeStrategy(path)
+      case x if x.endsWith("module-info.class") => MergeStrategy.discard
+      case path                                 => MergeStrategy.defaultMergeStrategy(path)
     },
     assembly / fullClasspath := (Jmh / fullClasspath).value,
     assembly / mainClass     := Some("org.openjdk.jmh.Main"),

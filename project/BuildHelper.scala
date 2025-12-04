@@ -4,10 +4,12 @@ import sbtbuildinfo.*
 import sbtbuildinfo.BuildInfoKeys.*
 import sbtcrossproject.CrossPlugin.autoImport.*
 import scoverage.ScoverageKeys.coverageEnabled
+import scala.scalanative.build.{LTO, Mode}
+import scala.scalanative.sbtplugin.ScalaNativePlugin.autoImport.nativeConfig
 
 object BuildHelper {
-  val Scala213: String = "2.13.16"
-  val Scala3: String   = "3.3.6"
+  val Scala213: String = "2.13.18"
+  val Scala3: String   = "3.3.7"
 
   val JdkReleaseVersion: String = "11"
 
@@ -70,10 +72,10 @@ object BuildHelper {
     }
   )
 
-  def stdSettings(prjName: String): Seq[Def.Setting[?]] = Seq(
+  def stdSettings(prjName: String, scalaVersions: Seq[String] = Seq(Scala3, Scala213)): Seq[Def.Setting[?]] = Seq(
     name                     := prjName,
-    crossScalaVersions       := Seq(Scala213, Scala3),
-    ThisBuild / scalaVersion := Scala213,
+    crossScalaVersions       := scalaVersions,
+    ThisBuild / scalaVersion := scalaVersions.head,
     ThisBuild / publishTo    := {
       val centralSnapshots = "https://central.sonatype.com/repository/maven-snapshots/"
       if (isSnapshot.value) Some("central-snapshots" at centralSnapshots)
@@ -90,11 +92,14 @@ object BuildHelper {
     ) ++ (CrossVersion.partialVersion(scalaVersion.value) match {
       case Some((2, _)) =>
         Seq(
+          "-language:existentials",
           "-opt:l:method",
           "-Ywarn-unused"
         )
       case _ =>
         Seq(
+          "-rewrite",
+          "-no-indent",
           "-explain",
           "-explain-cyclic",
           "-Xcheck-macros",
@@ -119,6 +124,10 @@ object BuildHelper {
   )
 
   def nativeSettings: Seq[Def.Setting[?]] = Seq(
+    nativeConfig ~= {
+      _.withMode(Mode.releaseFast) // TODO: Test with `Mode.releaseSize` and `Mode.releaseFull`
+        .withLTO(LTO.none)
+    },
     coverageEnabled := false,
     Test / fork     := false
   )

@@ -1,9 +1,9 @@
 package zio.blocks.schema
 
 import zio.test._
+import zio.test.TestAspect._
 import DynamicValueGen._
 import zio.test.Assertion.{equalTo, not}
-import zio.test.TestAspect.jvmOnly
 
 object DynamicValueSpec extends ZIOSpecDefault {
   def spec: Spec[TestEnvironment, Any] = suite("DynamicValueSpec")(
@@ -107,5 +107,5 @@ object DynamicValueSpec extends ZIOSpecDefault {
         }
       }
     )
-  ) @@ jvmOnly
+  ) @@ exceptNative
 }

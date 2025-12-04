@@ -23,7 +23,7 @@ jobs:
           sudo apt-get install -y locales
           sudo locale-gen en_US.UTF-8
       - name: Checkout current branch
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.0
         with:
           fetch-depth: 0
       - name: Setup Action
@@ -32,32 +32,37 @@ jobs:
           jvm: temurin:11
           apps: sbt
       - name: Cache scala dependencies
-        uses: coursier/cache-action@v6
+        uses: coursier/cache-action@v7
       - name: Lint code
         run: sbt "++2.13; check; ++3.3; check; ++3.7; check"
 
   test:
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 30
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        java: ['11', '21']
+        java: [11, 25]
         os: ['ubuntu-22.04-arm', 'ubuntu-22.04']
     steps:
       - name: Checkout current branch
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.0
         with:
           fetch-depth: 0
+      - name: Set JVM options for JDK 25+
+        if: matrix.java >= 25
+        run: echo "JAVA_TOOL_OPTIONS=-XX:+UseCompactObjectHeaders" >> $GITHUB_ENV
+        shell: bash
       - name: Setup Action
         uses: coursier/setup-action@v1
         with:
           jvm: temurin:${{ matrix.java }}
+          jvm-index: https://raw.githubusercontent.com/coursier/jvm-index/refs/heads/master/index.json
           apps: sbt
       - name: Cache scala dependencies
-        uses: coursier/cache-action@v6
+        uses: coursier/cache-action@v7
       - name: Run Scala Next tests for macros
-        run: sbt ++3.7.3! schemaJVM/test scalaNextTestsJVM/test
+        run: sbt ++3.7.4! scalaNextTestsJVM/test scalaNextTestsJS/test scalaNextTestsNative/test benchmarks/test
       - name: Run tests
         run: sbt +test
 
@@ -70,12 +75,12 @@ jobs:
 
   publish:
     runs-on: ubuntu-22.04
-    timeout-minutes: 60
+    timeout-minutes: 90
     needs: [ci]
     if: ${{ github.event_name != 'pull_request' }}
     steps:
       - name: Checkout current branch
-        uses: actions/checkout@v5.0.0
+        uses: actions/checkout@v6.0.0
         with:
           fetch-depth: 0
       - name: Setup Action

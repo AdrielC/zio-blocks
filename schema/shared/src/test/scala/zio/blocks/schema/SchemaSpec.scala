@@ -1,9 +1,9 @@
 package zio.blocks.schema
 
 import zio.Chunk
-import zio.blocks.schema.DynamicOptic.Node.{Elements, MapValues}
+import zio.blocks.schema.DynamicOptic.Node.{AtIndex, AtMapKey, Elements, MapValues}
 import zio.blocks.schema.Reflect.Primitive
-import zio.blocks.schema.SchemaError.{InvalidType, MissingField}
+import zio.blocks.schema.SchemaError.{ExpectationMismatch, MissingField}
 import zio.blocks.schema.binding._
 import zio.blocks.schema.codec.{TextCodec, TextFormat}
 import zio.blocks.schema.derive.Deriver
@@ -50,7 +50,7 @@ object SchemaSpec extends ZIOSpecDefault {
       test("has consistent toDynamicValue and fromDynamicValue") {
         assert(Schema[Byte].fromDynamicValue(Schema[Byte].toDynamicValue(1)))(isRight(equalTo(1: Byte))) &&
         assert(Schema[Byte].fromDynamicValue(DynamicValue.Primitive(PrimitiveValue.Int(1))))(
-          isLeft(equalTo(SchemaError.invalidType(Nil, "Expected Byte")))
+          isLeft(hasError("Expected Byte at: ."))
         )
       },
       test("encodes values using provided formats and outputs") {
@@ -109,7 +109,7 @@ object SchemaSpec extends ZIOSpecDefault {
           isRight(equalTo(Record(1: Byte, 1000)))
         ) &&
         assert(Record.schema.fromDynamicValue(DynamicValue.Primitive(PrimitiveValue.Int(1))))(
-          isLeft(equalTo(SchemaError.invalidType(Nil, "Expected a record")))
+          isLeft(hasError("Expected a record at: ."))
         ) &&
         assert(
           Record.schema.fromDynamicValue(
@@ -120,15 +120,7 @@ object SchemaSpec extends ZIOSpecDefault {
               )
             )
           )
-        )(
-          isLeft(
-            hasField[SchemaError, String](
-              "getMessage",
-              _.getMessage,
-              containsString("Expected Int at: .i\nDuplicated field i at: .\nMissing field b at: .")
-            )
-          )
-        )
+        )(isLeft(hasError("Expected Int at: .i\nDuplicated field 'i' at: .\nMissing field 'b' at: .")))
       },
       test("has consistent gets for typed and dynamic optics") {
         assert(Record.schema.get(Record.b.toDynamic))(equalTo(Record.schema.get(Record.b))) &&
@@ -171,7 +163,7 @@ object SchemaSpec extends ZIOSpecDefault {
                   Schema[Long].reflect.asTerm("_4")
                 ),
                 typeName = TypeName(
-                  namespace = Namespace(packages = Seq("scala"), values = Nil),
+                  namespace = Namespace(Seq("scala")),
                   name = "Tuple4",
                   params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
                 ),
@@ -670,7 +662,8 @@ object SchemaSpec extends ZIOSpecDefault {
           new Schema(
             new Reflect.Wrapper[Binding, Chunk[V], List[V]](
               Schema.list[V].reflect,
-              TypeName(Namespace("zio" :: Nil, Nil), "Chunk"),
+              TypeName(Namespace(Seq("zio")), "Chunk"),
+              None,
               new Binding.Wrapper(x => new Right(Chunk.fromIterable(x)), _.toList)
             )
           )
@@ -807,27 +800,20 @@ object SchemaSpec extends ZIOSpecDefault {
           isRight(equalTo(Case2("VVV")))
         ) &&
         assert(Variant.schema.fromDynamicValue(DynamicValue.Primitive(PrimitiveValue.Int(1))))(
-          isLeft(equalTo(SchemaError.invalidType(Nil, "Expected a variant")))
+          isLeft(hasError("Expected a variant at: ."))
         ) &&
         assert(
           Variant.schema.fromDynamicValue(
             DynamicValue.Variant("Unknown", DynamicValue.Primitive(PrimitiveValue.Long(1000)))
           )
-        )(isLeft(equalTo(SchemaError.unknownCase(Nil, "Unknown")))) &&
+        )(isLeft(hasError("Unknown case 'Unknown' at: ."))) &&
         assert(
           Variant.schema.fromDynamicValue(
             DynamicValue
               .Variant("Case2", DynamicValue.Record(Vector(("s", DynamicValue.Primitive(PrimitiveValue.Int(1))))))
           )
         )(
-          isLeft(
-            equalTo(
-              SchemaError.invalidType(
-                List(DynamicOptic.Node.Field("s"), DynamicOptic.Node.Case("Case2")),
-                "Expected String"
-              )
-            )
-          )
+          isLeft(hasError("Expected String at: .when[Case2].s"))
         )
       },
       test("has consistent gets for typed and dynamic optics") {
@@ -864,6 +850,11 @@ object SchemaSpec extends ZIOSpecDefault {
         val record1 = variant.flatMap(_.cases(0).value.asRecord)
         val record2 = variant.flatMap(_.cases(1).value.asRecord)
         val record3 = variant.flatMap(_.cases(2).value.asRecord)
+        assert(variant.map(_.cases(0).modifiers))(
+          isSome(
+            equalTo(Seq(Modifier.config("case-key-1", "case-value-1"), Modifier.config("case-key-1", "case-value-2")))
+          )
+        ) &&
         assert(record1.map(_.modifiers))(
           isSome(
             equalTo(Seq(Modifier.config("case-key-1", "case-value-1"), Modifier.config("case-key-1", "case-value-2")))
@@ -874,6 +865,11 @@ object SchemaSpec extends ZIOSpecDefault {
             equalTo(Seq(Modifier.config("field-key-1", "field-value-1")))
           )
         ) &&
+        assert(variant.map(_.cases(1).modifiers))(
+          isSome(
+            equalTo(Seq(Modifier.config("case-key-2", "case-value-1"), Modifier.config("case-key-2", "case-value-2")))
+          )
+        ) &&
         assert(record2.map(_.modifiers))(
           isSome(
             equalTo(Seq(Modifier.config("case-key-2", "case-value-1"), Modifier.config("case-key-2", "case-value-2")))
@@ -882,6 +878,11 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(record2.map(_.fields.flatMap(_.modifiers)): Option[Any])(
           isSome(
             equalTo(Seq(Modifier.config("field-key-2", "field-value-2")))
+          )
+        ) &&
+        assert(variant.map(_.cases(2).modifiers))(
+          isSome(
+            equalTo(Seq(Modifier.config("case-key-3", "case-value-1"), Modifier.config("case-key-3", "case-value-2")))
           )
         ) &&
         assert(record3.map(_.modifiers))(
@@ -972,6 +973,32 @@ object SchemaSpec extends ZIOSpecDefault {
             )
           )
         )
+      },
+      test("derives schema for options") {
+        val schema1  = Schema.derived[Option[String]]
+        val schema2  = Schema.derived[Option[Unit]]
+        val schema3  = Schema.derived[Option[Boolean]]
+        val schema4  = Schema.derived[Option[Byte]]
+        val schema5  = Schema.derived[Option[Char]]
+        val schema6  = Schema.derived[Option[Short]]
+        val schema7  = Schema.derived[Option[Float]]
+        val schema8  = Schema.derived[Option[Int]]
+        val schema9  = Schema.derived[Option[Double]]
+        val schema10 = Schema.derived[Option[Long]]
+        assert(schema1.fromDynamicValue(schema1.toDynamicValue(Option("VVV"))))(isRight(equalTo(Option("VVV")))) &&
+        assert(schema2.fromDynamicValue(schema2.toDynamicValue(Option(()))))(isRight(equalTo(Option(())))) &&
+        assert(schema3.fromDynamicValue(schema3.toDynamicValue(Option(true))))(isRight(equalTo(Option(true)))) &&
+        assert(schema4.fromDynamicValue(schema4.toDynamicValue(Option(1.toByte))))(
+          isRight(equalTo(Option(1.toByte)))
+        ) &&
+        assert(schema5.fromDynamicValue(schema5.toDynamicValue(Option('V'))))(isRight(equalTo(Option('V')))) &&
+        assert(schema6.fromDynamicValue(schema6.toDynamicValue(Option(1.toShort))))(
+          isRight(equalTo(Option(1.toShort)))
+        ) &&
+        assert(schema7.fromDynamicValue(schema7.toDynamicValue(Option(1.0f))))(isRight(equalTo(Option(1.0f)))) &&
+        assert(schema8.fromDynamicValue(schema8.toDynamicValue(Option(1))))(isRight(equalTo(Option(1)))) &&
+        assert(schema9.fromDynamicValue(schema9.toDynamicValue(Option(1.0))))(isRight(equalTo(Option(1.0)))) &&
+        assert(schema10.fromDynamicValue(schema10.toDynamicValue(Option(1L))))(isRight(equalTo(Option(1L))))
       },
       test("derives schema for a variant with cases on different levels using a macro call") {
         object Level1_MultiLevel extends CompanionOptics[Level1.MultiLevel] {
@@ -1209,7 +1236,7 @@ object SchemaSpec extends ZIOSpecDefault {
           isRight(equalTo(List("VVV", "WWW")))
         ) &&
         assert(Schema[List[Int]].fromDynamicValue(DynamicValue.Primitive(PrimitiveValue.Int(1))))(
-          isLeft(equalTo(SchemaError.invalidType(Nil, "Expected a sequence")))
+          isLeft(hasError("Expected a sequence at: ."))
         ) &&
         assert(
           Schema[List[Boolean]].fromDynamicValue(
@@ -1220,55 +1247,47 @@ object SchemaSpec extends ZIOSpecDefault {
               )
             )
           )
-        )(
-          isLeft(
-            hasField[SchemaError, String](
-              "getMessage",
-              _.getMessage,
-              containsString("Expected Boolean at: .each\nExpected Boolean at: .each")
-            )
-          )
-        ) &&
+        )(isLeft(hasError("Expected Boolean at: .each.at(0)\nExpected Boolean at: .each.at(1)"))) &&
         assert(
           Schema[List[Byte]].fromDynamicValue(
             DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
           )
-        )(isLeft(equalTo(SchemaError.invalidType(Elements :: Nil, "Expected Byte")))) &&
+        )(isLeft(hasError("Expected Byte at: .each.at(0)"))) &&
         assert(
           Schema[List[Char]].fromDynamicValue(
             DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
           )
-        )(isLeft(equalTo(SchemaError.invalidType(Elements :: Nil, "Expected Char")))) &&
+        )(isLeft(hasError("Expected Char at: .each.at(0)"))) &&
         assert(
           Schema[List[Short]].fromDynamicValue(
             DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
           )
-        )(isLeft(equalTo(SchemaError.invalidType(Elements :: Nil, "Expected Short")))) &&
+        )(isLeft(hasError("Expected Short at: .each.at(0)"))) &&
         assert(
           Schema[List[Int]].fromDynamicValue(
             DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Long(1))))
           )
-        )(isLeft(equalTo(SchemaError.invalidType(Elements :: Nil, "Expected Int")))) &&
+        )(isLeft(hasError("Expected Int at: .each.at(0)"))) &&
         assert(
           Schema[List[Float]].fromDynamicValue(
             DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
           )
-        )(isLeft(equalTo(SchemaError.invalidType(Elements :: Nil, "Expected Float")))) &&
+        )(isLeft(hasError("Expected Float at: .each.at(0)"))) &&
         assert(
           Schema[List[Long]].fromDynamicValue(
             DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
           )
-        )(isLeft(equalTo(SchemaError.invalidType(Elements :: Nil, "Expected Long")))) &&
+        )(isLeft(hasError("Expected Long at: .each.at(0)"))) &&
         assert(
           Schema[List[Double]].fromDynamicValue(
             DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
           )
-        )(isLeft(equalTo(SchemaError.invalidType(Elements :: Nil, "Expected Double")))) &&
+        )(isLeft(hasError("Expected Double at: .each.at(0)"))) &&
         assert(
           Schema[List[String]].fromDynamicValue(
             DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
           )
-        )(isLeft(equalTo(SchemaError.invalidType(Elements :: Nil, "Expected String")))) &&
+        )(isLeft(hasError("Expected String at: .each.at(0)"))) &&
         assert(
           Schema[List[Record]].fromDynamicValue(DynamicValue.Sequence(Vector(DynamicValue.Record(Vector.empty))))
         )(
@@ -1277,12 +1296,12 @@ object SchemaSpec extends ZIOSpecDefault {
               SchemaError(
                 errors = ::(
                   MissingField(
-                    source = DynamicOptic(nodes = Vector(Elements)),
+                    source = DynamicOptic(nodes = Vector(Elements, AtIndex(0))),
                     fieldName = "b"
                   ),
                   ::(
                     MissingField(
-                      source = DynamicOptic(nodes = Vector(Elements)),
+                      source = DynamicOptic(nodes = Vector(Elements, AtIndex(0))),
                       fieldName = "i"
                     ),
                     Nil
@@ -1376,7 +1395,7 @@ object SchemaSpec extends ZIOSpecDefault {
           Schema[Map[Int, Long]].fromDynamicValue(Schema[Map[Int, Long]].toDynamicValue(Map(1 -> 1L, 2 -> 2L, 3 -> 3L)))
         )(isRight(equalTo(Map(1 -> 1L, 2 -> 2L, 3 -> 3L)))) &&
         assert(Schema[Map[Int, Long]].fromDynamicValue(DynamicValue.Primitive(PrimitiveValue.Int(1))))(
-          isLeft(equalTo(SchemaError.invalidType(Nil, "Expected a map")))
+          isLeft(hasError("Expected a map at: ."))
         ) &&
         assert(
           Schema[Map[Int, Long]].fromDynamicValue(
@@ -1386,7 +1405,7 @@ object SchemaSpec extends ZIOSpecDefault {
               )
             )
           )
-        )(isLeft(equalTo(SchemaError.invalidType(DynamicOptic.Node.MapKeys :: Nil, "Expected Int")))) &&
+        )(isLeft(hasError("Expected Int at: .eachKey"))) &&
         assert(
           Schema[Map[Int, Long]].fromDynamicValue(
             DynamicValue.Map(
@@ -1401,13 +1420,13 @@ object SchemaSpec extends ZIOSpecDefault {
             equalTo(
               SchemaError(
                 errors = ::(
-                  InvalidType(
-                    source = DynamicOptic(nodes = Vector(MapValues)),
+                  ExpectationMismatch(
+                    source = DynamicOptic(nodes = Vector(MapValues, AtMapKey(1))),
                     expectation = "Expected Long"
                   ),
                   ::(
-                    InvalidType(
-                      source = DynamicOptic(nodes = Vector(MapValues)),
+                    ExpectationMismatch(
+                      source = DynamicOptic(nodes = Vector(MapValues, AtMapKey(1))),
                       expectation = "Expected Long"
                     ),
                     Nil
@@ -1675,35 +1694,18 @@ object SchemaSpec extends ZIOSpecDefault {
         val value = PosInt.applyUnsafe(1)
         assert(Schema[PosInt].fromDynamicValue(Schema[PosInt].toDynamicValue(value)))(isRight(equalTo(value))) &&
         assert(Schema[PosInt].fromDynamicValue(DynamicValue.Primitive(PrimitiveValue.Int(-1))))(
-          isLeft(
-            equalTo(
-              SchemaError(
-                errors = ::(
-                  InvalidType(
-                    source = DynamicOptic(nodes = Vector()),
-                    expectation = "Expected PosInt: Expected positive value"
-                  ),
-                  Nil
-                )
-              )
-            )
-          )
+          isLeft(hasError("Expected PosInt: Expected positive value at: ."))
         ) &&
         assert(Schema[PosInt].fromDynamicValue(DynamicValue.Primitive(PrimitiveValue.String("WWW"))))(
-          isLeft(
-            equalTo(
-              SchemaError(
-                errors = ::(
-                  InvalidType(
-                    source = DynamicOptic(nodes = Vector()),
-                    expectation = "Expected Int"
-                  ),
-                  Nil
-                )
-              )
-            )
-          )
+          isLeft(hasError("Expected Int at: ."))
         )
+      },
+      test("has consistent toDynamicValue and fromDynamicValue with wrapper in a case class") {
+        case class Test(a: PosInt)
+
+        val value  = Test(PosInt.applyUnsafe(1))
+        val schema = Schema.derived[Test]
+        assert(schema.fromDynamicValue(schema.toDynamicValue(value)))(isRight(equalTo(value)))
       },
       test("encodes values using provided formats and outputs") {
         assert(encodeToString { out =>
@@ -1747,6 +1749,9 @@ object SchemaSpec extends ZIOSpecDefault {
       )
     }
   )
+
+  private[this] def hasError(message: String): Assertion[SchemaError] =
+    hasField[SchemaError, String]("getMessage", _.getMessage, containsString(message))
 
   implicit val eitherSchema: Schema[Either[Int, Long]] = Schema.derived
 
@@ -1921,6 +1926,7 @@ object SchemaSpec extends ZIOSpecDefault {
           override def deriveWrapper[F[_, _], A, B](
             wrapped: Reflect[F, B],
             typeName: TypeName[A],
+            wrapperPrimitiveType: Option[PrimitiveType[A]],
             binding: Binding[BindingType.Wrapper[A, B], A],
             doc: Doc,
             modifiers: Seq[Modifier.Reflect]

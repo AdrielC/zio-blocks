@@ -232,13 +232,12 @@ object Lens {
     focusTerms: Array[Term.Bound[?, ?]]
   ) extends Lens[S, A] {
     private[this] var bindings: Array[LensBinding]  = null
-    private[this] var usedRegisters: RegisterOffset = RegisterOffset.Zero
+    private[this] var usedRegisters: RegisterOffset = 0
 
     private[this] def init(): Unit = {
-      var offset   = RegisterOffset.Zero
-      val len      = sources.length
-      val bindings = new Array[LensBinding](len)
-      var idx      = 0
+      val len         = sources.length
+      val bindings    = new Array[LensBinding](len)
+      var offset, idx = 0
       while (idx < len) {
         val source        = sources(idx)
         val focusTermName = focusTerms(idx).name
@@ -635,7 +634,7 @@ object Optional {
     params: Array[Any]
   ) extends Optional[S, A] {
     private[this] var bindings: Array[OpticBinding] = null
-    private[this] var usedRegisters: RegisterOffset = RegisterOffset.Zero
+    private[this] var usedRegisters: RegisterOffset = 0
 
     type Key
     type Value
@@ -646,10 +645,9 @@ object Optional {
     type Wrapped
 
     private[this] def init(): Unit = {
-      val len      = sources.length
-      val bindings = new Array[OpticBinding](len)
-      var offset   = RegisterOffset.Zero
-      var idx      = 0
+      val len         = sources.length
+      val bindings    = new Array[OpticBinding](len)
+      var offset, idx = 0
       while (idx < len) {
         val focusTermName = focusTerms(idx).name
         sources(idx) match {
@@ -725,11 +723,11 @@ object Optional {
             val col           = x.asInstanceOf[Col[A]]
             deconstructor match {
               case indexed: SeqDeconstructor.SpecializedIndexed[Col] =>
-                val colLen = indexed.length(col)
-                val colIdx = atBinding.index
-                if (colLen <= colIdx) {
+                val colSize = indexed.size(col)
+                val colIdx  = atBinding.index
+                if (colSize <= colIdx) {
                   val sequenceIndexOutOfBounds =
-                    new OpticCheck.SequenceIndexOutOfBounds(toDynamic, toDynamic(idx), colIdx, colLen)
+                    new OpticCheck.SequenceIndexOutOfBounds(toDynamic, toDynamic(idx), colIdx, colSize)
                   return new Some(new OpticCheck(new ::(sequenceIndexOutOfBounds, Nil)))
                 }
                 indexed.elementType(col) match {
@@ -796,9 +794,9 @@ object Optional {
             val col           = x.asInstanceOf[Col[A]]
             deconstructor match {
               case indexed: SeqDeconstructor.SpecializedIndexed[Col] =>
-                val colLen = indexed.length(col)
-                val colIdx = atBinding.index
-                if (colLen <= colIdx) return None
+                val colSize = indexed.size(col)
+                val colIdx  = atBinding.index
+                if (colSize <= colIdx) return None
                 indexed.elementType(col) match {
                   case _: RegisterType.Boolean.type => x = indexed.booleanAt(x.asInstanceOf[Col[Boolean]], colIdx)
                   case _: RegisterType.Byte.type    => x = indexed.byteAt(x.asInstanceOf[Col[Byte]], colIdx)
@@ -923,7 +921,7 @@ object Optional {
           else {
             val sizeHint =
               deconstructor match {
-                case indexed: SeqDeconstructor.SpecializedIndexed[Col] => indexed.length(col)
+                case indexed: SeqDeconstructor.SpecializedIndexed[Col] => indexed.size(col)
                 case _                                                 => 8
               }
             val builder = constructor.newObjectBuilder[Any](sizeHint)
@@ -968,12 +966,12 @@ object Optional {
     ): Col[A] =
       deconstructor match {
         case indexed: SeqDeconstructor.SpecializedIndexed[Col] =>
-          val len = indexed.length(s)
+          val size = indexed.size(s)
           indexed.elementType(s) match {
             case _: RegisterType.Boolean.type =>
-              val builder = constructor.newBooleanBuilder(len)
+              val builder = constructor.newBooleanBuilder(size)
               var idx     = 0
-              while (idx < len) {
+              while (idx < size) {
                 constructor.addBoolean(
                   builder, {
                     val value = indexed.booleanAt(s.asInstanceOf[Col[Boolean]], idx)
@@ -985,9 +983,9 @@ object Optional {
               }
               constructor.resultBoolean(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Byte.type =>
-              val builder = constructor.newByteBuilder(len)
+              val builder = constructor.newByteBuilder(size)
               var idx     = 0
-              while (idx < len) {
+              while (idx < size) {
                 constructor.addByte(
                   builder, {
                     val value = indexed.byteAt(s.asInstanceOf[Col[Byte]], idx)
@@ -999,9 +997,9 @@ object Optional {
               }
               constructor.resultByte(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Short.type =>
-              val builder = constructor.newShortBuilder(len)
+              val builder = constructor.newShortBuilder(size)
               var idx     = 0
-              while (idx < len) {
+              while (idx < size) {
                 constructor.addShort(
                   builder, {
                     val value = indexed.shortAt(s.asInstanceOf[Col[Short]], idx)
@@ -1013,9 +1011,9 @@ object Optional {
               }
               constructor.resultShort(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Int.type =>
-              val builder = constructor.newIntBuilder(len)
+              val builder = constructor.newIntBuilder(size)
               var idx     = 0
-              while (idx < len) {
+              while (idx < size) {
                 constructor.addInt(
                   builder, {
                     val value = indexed.intAt(s.asInstanceOf[Col[Int]], idx)
@@ -1027,9 +1025,9 @@ object Optional {
               }
               constructor.resultInt(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Long.type =>
-              val builder = constructor.newLongBuilder(len)
+              val builder = constructor.newLongBuilder(size)
               var idx     = 0
-              while (idx < len) {
+              while (idx < size) {
                 constructor.addLong(
                   builder, {
                     val value = indexed.longAt(s.asInstanceOf[Col[Long]], idx)
@@ -1041,9 +1039,9 @@ object Optional {
               }
               constructor.resultLong(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Float.type =>
-              val builder = constructor.newFloatBuilder(len)
+              val builder = constructor.newFloatBuilder(size)
               var idx     = 0
-              while (idx < len) {
+              while (idx < size) {
                 constructor.addFloat(
                   builder, {
                     val value = indexed.floatAt(s.asInstanceOf[Col[Float]], idx)
@@ -1055,9 +1053,9 @@ object Optional {
               }
               constructor.resultFloat(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Double.type =>
-              val builder = constructor.newDoubleBuilder(len)
+              val builder = constructor.newDoubleBuilder(size)
               var idx     = 0
-              while (idx < len) {
+              while (idx < size) {
                 constructor.addDouble(
                   builder, {
                     val value = indexed.doubleAt(s.asInstanceOf[Col[Double]], idx)
@@ -1069,9 +1067,9 @@ object Optional {
               }
               constructor.resultDouble(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Char.type =>
-              val builder = constructor.newCharBuilder(len)
+              val builder = constructor.newCharBuilder(size)
               var idx     = 0
-              while (idx < len) {
+              while (idx < size) {
                 constructor.addChar(
                   builder, {
                     val value = indexed.charAt(s.asInstanceOf[Col[Char]], idx)
@@ -1083,9 +1081,9 @@ object Optional {
               }
               constructor.resultChar(builder).asInstanceOf[Col[A]]
             case _ =>
-              val builder = constructor.newObjectBuilder[A](len)
+              val builder = constructor.newObjectBuilder[A](size)
               var idx     = 0
-              while (idx < len) {
+              while (idx < size) {
                 constructor.addObject(
                   builder, {
                     val value = indexed.objectAt(s, idx)
@@ -1340,7 +1338,7 @@ object Traversal {
     params: Array[Any]
   ) extends Traversal[S, A] {
     private[this] var bindings: Array[OpticBinding] = null
-    private[this] var usedRegisters: RegisterOffset = RegisterOffset.Zero
+    private[this] var usedRegisters: RegisterOffset = 0
 
     type Key
     type Value
@@ -1351,10 +1349,9 @@ object Traversal {
     type Wrapped
 
     private[this] def init(): Unit = {
-      val len      = sources.length
-      val bindings = new Array[OpticBinding](len)
-      var offset   = RegisterOffset.Zero
-      var idx      = 0
+      val len         = sources.length
+      val bindings    = new Array[OpticBinding](len)
+      var offset, idx = 0
       while (idx < len) {
         val focusTermName = focusTerms(idx).name
         sources(idx) match {
@@ -1469,10 +1466,10 @@ object Traversal {
           val col           = x.asInstanceOf[Col[A]]
           deconstructor match {
             case indexed: SeqDeconstructor.SpecializedIndexed[Col] =>
-              val colLen = indexed.length(col)
-              val colIdx = atBinding.index
-              if (colLen <= colIdx) {
-                errors.addOne(new OpticCheck.SequenceIndexOutOfBounds(toDynamic, toDynamic(idx), colIdx, colLen))
+              val colSize = indexed.size(col)
+              val colIdx  = atBinding.index
+              if (colSize <= colIdx) {
+                errors.addOne(new OpticCheck.SequenceIndexOutOfBounds(toDynamic, toDynamic(idx), colIdx, colSize))
               } else if (idx + 1 != bindings.length) {
                 checkRecursive(registers, idx + 1, indexed.objectAt(col, colIdx), errors)
               }
@@ -1500,13 +1497,13 @@ object Traversal {
           val col           = x.asInstanceOf[Col[A]]
           deconstructor match {
             case indexed: SeqDeconstructor.SpecializedIndexed[Col] =>
-              val colLen     = indexed.length(col)
+              val colSize    = indexed.size(col)
               val indices    = atIndicesBinding.indices
               var indicesIdx = 0
               while (indicesIdx < indices.length) {
                 val colIdx = indices(indicesIdx)
-                if (colLen <= colIdx) {
-                  errors.addOne(new OpticCheck.SequenceIndexOutOfBounds(toDynamic, toDynamic(idx), colIdx, colLen))
+                if (colSize <= colIdx) {
+                  errors.addOne(new OpticCheck.SequenceIndexOutOfBounds(toDynamic, toDynamic(idx), colIdx, colSize))
                 } else if (idx + 1 != bindings.length) {
                   checkRecursive(registers, idx + 1, indexed.objectAt(col, colIdx), errors)
                 }
@@ -1588,9 +1585,9 @@ object Traversal {
           val col           = x.asInstanceOf[Col[A]]
           deconstructor match {
             case indexed: SeqDeconstructor.SpecializedIndexed[Col] =>
-              val colLen = indexed.length(col)
-              val colIdx = atBinding.index
-              if (colLen <= colIdx) zero
+              val colSize = indexed.size(col)
+              val colIdx  = atBinding.index
+              if (colSize <= colIdx) zero
               else if (idx + 1 == bindings.length) {
                 f(
                   zero,
@@ -1644,10 +1641,10 @@ object Traversal {
             var indicesIdx = 0
             deconstructor match {
               case indexed: SeqDeconstructor.SpecializedIndexed[Col] =>
-                val colLen = indexed.length(col)
+                val colSize = indexed.size(col)
                 while (indicesIdx < indices.length) {
                   val colIdx = indices(indicesIdx)
-                  if (colLen > colIdx) z = foldRecursive(registers, idx + 1, indexed.objectAt(col, colIdx), z, f)
+                  if (colSize > colIdx) z = foldRecursive(registers, idx + 1, indexed.objectAt(col, colIdx), z, f)
                   indicesIdx += 1
                 }
               case _ =>
@@ -1730,7 +1727,7 @@ object Traversal {
     ): Z =
       deconstructor match {
         case indexed: SeqDeconstructor.SpecializedIndexed[Col] =>
-          val colLen     = indexed.length(x)
+          val colSize    = indexed.size(x)
           var indicesIdx = 0
           indexed.elementType(x) match {
             case _: RegisterType.Int.type =>
@@ -1741,7 +1738,7 @@ object Traversal {
                   val sf     = f.asInstanceOf[(Int, Int) => Int]
                   while (indicesIdx < indices.length) {
                     val colIdx = indices(indicesIdx)
-                    if (colLen > colIdx) z = sf(z, indexed.intAt(col, colIdx))
+                    if (colSize > colIdx) z = sf(z, indexed.intAt(col, colIdx))
                     indicesIdx += 1
                   }
                   z.asInstanceOf[Z]
@@ -1750,7 +1747,7 @@ object Traversal {
                   val sf      = f.asInstanceOf[(Long, Int) => Long]
                   while (indicesIdx < indices.length) {
                     val colIdx = indices(indicesIdx)
-                    if (colLen > colIdx) z = sf(z, indexed.intAt(col, colIdx))
+                    if (colSize > colIdx) z = sf(z, indexed.intAt(col, colIdx))
                     indicesIdx += 1
                   }
                   z.asInstanceOf[Z]
@@ -1759,7 +1756,7 @@ object Traversal {
                   val sf        = f.asInstanceOf[(Double, Int) => Double]
                   while (indicesIdx < indices.length) {
                     val colIdx = indices(indicesIdx)
-                    if (colLen > colIdx) z = sf(z, indexed.intAt(col, colIdx))
+                    if (colSize > colIdx) z = sf(z, indexed.intAt(col, colIdx))
                     indicesIdx += 1
                   }
                   z.asInstanceOf[Z]
@@ -1768,7 +1765,7 @@ object Traversal {
                   val sf = f.asInstanceOf[(Z, Int) => Z]
                   while (indicesIdx < indices.length) {
                     val colIdx = indices(indicesIdx)
-                    if (colLen > colIdx) z = sf(z, indexed.intAt(col, colIdx))
+                    if (colSize > colIdx) z = sf(z, indexed.intAt(col, colIdx))
                     indicesIdx += 1
                   }
                   z
@@ -1781,7 +1778,7 @@ object Traversal {
                   val sf     = f.asInstanceOf[(Int, Long) => Int]
                   while (indicesIdx < indices.length) {
                     val colIdx = indices(indicesIdx)
-                    if (colLen > colIdx) z = sf(z, indexed.longAt(col, colIdx))
+                    if (colSize > colIdx) z = sf(z, indexed.longAt(col, colIdx))
                     indicesIdx += 1
                   }
                   z.asInstanceOf[Z]
@@ -1790,7 +1787,7 @@ object Traversal {
                   val sf      = f.asInstanceOf[(Long, Long) => Long]
                   while (indicesIdx < indices.length) {
                     val colIdx = indices(indicesIdx)
-                    if (colLen > colIdx) z = sf(z, indexed.longAt(col, colIdx))
+                    if (colSize > colIdx) z = sf(z, indexed.longAt(col, colIdx))
                     indicesIdx += 1
                   }
                   z.asInstanceOf[Z]
@@ -1799,7 +1796,7 @@ object Traversal {
                   val sf        = f.asInstanceOf[(Double, Long) => Double]
                   while (indicesIdx < indices.length) {
                     val colIdx = indices(indicesIdx)
-                    if (colLen > colIdx) z = sf(z, indexed.longAt(col, colIdx))
+                    if (colSize > colIdx) z = sf(z, indexed.longAt(col, colIdx))
                     indicesIdx += 1
                   }
                   z.asInstanceOf[Z]
@@ -1808,7 +1805,7 @@ object Traversal {
                   val sf = f.asInstanceOf[(Z, Long) => Z]
                   while (indicesIdx < indices.length) {
                     val colIdx = indices(indicesIdx)
-                    if (colLen > colIdx) z = sf(z, indexed.longAt(col, colIdx))
+                    if (colSize > colIdx) z = sf(z, indexed.longAt(col, colIdx))
                     indicesIdx += 1
                   }
                   z
@@ -1821,7 +1818,7 @@ object Traversal {
                   val sf     = f.asInstanceOf[(Int, Double) => Int]
                   while (indicesIdx < indices.length) {
                     val colIdx = indices(indicesIdx)
-                    if (colLen > colIdx) z = sf(z, indexed.doubleAt(col, colIdx))
+                    if (colSize > colIdx) z = sf(z, indexed.doubleAt(col, colIdx))
                     indicesIdx += 1
                   }
                   z.asInstanceOf[Z]
@@ -1830,7 +1827,7 @@ object Traversal {
                   val sf      = f.asInstanceOf[(Long, Double) => Long]
                   while (indicesIdx < indices.length) {
                     val colIdx = indices(indicesIdx)
-                    if (colLen > colIdx) z = sf(z, indexed.doubleAt(col, colIdx))
+                    if (colSize > colIdx) z = sf(z, indexed.doubleAt(col, colIdx))
                     indicesIdx += 1
                   }
                   z.asInstanceOf[Z]
@@ -1839,7 +1836,7 @@ object Traversal {
                   val sf        = f.asInstanceOf[(Double, Double) => Double]
                   while (indicesIdx < indices.length) {
                     val colIdx = indices(indicesIdx)
-                    if (colLen > colIdx) z = sf(z, indexed.doubleAt(col, colIdx))
+                    if (colSize > colIdx) z = sf(z, indexed.doubleAt(col, colIdx))
                     indicesIdx += 1
                   }
                   z.asInstanceOf[Z]
@@ -1848,7 +1845,7 @@ object Traversal {
                   val sf = f.asInstanceOf[(Z, Double) => Z]
                   while (indicesIdx < indices.length) {
                     val colIdx = indices(indicesIdx)
-                    if (colLen > colIdx) z = sf(z, indexed.doubleAt(col, colIdx))
+                    if (colSize > colIdx) z = sf(z, indexed.doubleAt(col, colIdx))
                     indicesIdx += 1
                   }
                   z
@@ -1859,7 +1856,7 @@ object Traversal {
               var z   = zero
               while (indicesIdx < indices.length) {
                 val colIdx = indices(indicesIdx)
-                if (colLen > colIdx) z = sf(z, indexed.booleanAt(col, colIdx))
+                if (colSize > colIdx) z = sf(z, indexed.booleanAt(col, colIdx))
                 indicesIdx += 1
               }
               z
@@ -1869,7 +1866,7 @@ object Traversal {
               var z   = zero
               while (indicesIdx < indices.length) {
                 val colIdx = indices(indicesIdx)
-                if (colLen > colIdx) z = sf(z, indexed.byteAt(col, colIdx))
+                if (colSize > colIdx) z = sf(z, indexed.byteAt(col, colIdx))
                 indicesIdx += 1
               }
               z
@@ -1879,7 +1876,7 @@ object Traversal {
               val sf  = f.asInstanceOf[(Z, Short) => Z]
               while (indicesIdx < indices.length) {
                 val colIdx = indices(indicesIdx)
-                if (colLen > colIdx) z = sf(z, indexed.shortAt(col, colIdx))
+                if (colSize > colIdx) z = sf(z, indexed.shortAt(col, colIdx))
                 indicesIdx += 1
               }
               z
@@ -1889,7 +1886,7 @@ object Traversal {
               val sf  = f.asInstanceOf[(Z, Float) => Z]
               while (indicesIdx < indices.length) {
                 val colIdx = indices(indicesIdx)
-                if (colLen > colIdx) z = sf(z, indexed.floatAt(col, colIdx))
+                if (colSize > colIdx) z = sf(z, indexed.floatAt(col, colIdx))
                 indicesIdx += 1
               }
               z
@@ -1899,7 +1896,7 @@ object Traversal {
               val sf  = f.asInstanceOf[(Z, Char) => Z]
               while (indicesIdx < indices.length) {
                 val colIdx = indices(indicesIdx)
-                if (colLen > colIdx) z = sf(z, indexed.charAt(col, colIdx))
+                if (colSize > colIdx) z = sf(z, indexed.charAt(col, colIdx))
                 indicesIdx += 1
               }
               z
@@ -1907,7 +1904,7 @@ object Traversal {
               var z = zero
               while (indicesIdx < indices.length) {
                 val colIdx = indices(indicesIdx)
-                if (colLen > colIdx) z = f(z, indexed.objectAt(x, colIdx))
+                if (colSize > colIdx) z = f(z, indexed.objectAt(x, colIdx))
                 indicesIdx += 1
               }
               z
@@ -1934,7 +1931,7 @@ object Traversal {
     private[this] def foldSeq[Z](deconstructor: SeqDeconstructor[Col], x: Col[A], zero: Z, f: (Z, A) => Z): Z =
       deconstructor match {
         case indexed: SeqDeconstructor.SpecializedIndexed[Col] =>
-          val len     = indexed.length(x)
+          val size    = indexed.size(x)
           var currIdx = 0
           indexed.elementType(x) match {
             case _: RegisterType.Int.type =>
@@ -1943,7 +1940,7 @@ object Traversal {
                 case zi: Int =>
                   val sf     = f.asInstanceOf[(Int, Int) => Int]
                   var z: Int = zi
-                  while (currIdx < len) {
+                  while (currIdx < size) {
                     z = sf(z, indexed.intAt(col, currIdx))
                     currIdx += 1
                   }
@@ -1951,7 +1948,7 @@ object Traversal {
                 case zl: Long =>
                   val sf      = f.asInstanceOf[(Long, Int) => Long]
                   var z: Long = zl
-                  while (currIdx < len) {
+                  while (currIdx < size) {
                     z = sf(z, indexed.intAt(col, currIdx))
                     currIdx += 1
                   }
@@ -1959,7 +1956,7 @@ object Traversal {
                 case zd: Double =>
                   val sf        = f.asInstanceOf[(Double, Int) => Double]
                   var z: Double = zd
-                  while (currIdx < len) {
+                  while (currIdx < size) {
                     z = sf(z, indexed.intAt(col, currIdx))
                     currIdx += 1
                   }
@@ -1967,7 +1964,7 @@ object Traversal {
                 case _ =>
                   val sf = f.asInstanceOf[(Z, Int) => Z]
                   var z  = zero
-                  while (currIdx < len) {
+                  while (currIdx < size) {
                     z = sf(z, indexed.intAt(col, currIdx))
                     currIdx += 1
                   }
@@ -1979,7 +1976,7 @@ object Traversal {
                 case zi: Int =>
                   val sf     = f.asInstanceOf[(Int, Long) => Int]
                   var z: Int = zi
-                  while (currIdx < len) {
+                  while (currIdx < size) {
                     z = sf(z, indexed.longAt(col, currIdx))
                     currIdx += 1
                   }
@@ -1987,7 +1984,7 @@ object Traversal {
                 case zl: Long =>
                   val sf      = f.asInstanceOf[(Long, Long) => Long]
                   var z: Long = zl
-                  while (currIdx < len) {
+                  while (currIdx < size) {
                     z = sf(z, indexed.longAt(col, currIdx))
                     currIdx += 1
                   }
@@ -1995,7 +1992,7 @@ object Traversal {
                 case zd: Double =>
                   val sf        = f.asInstanceOf[(Double, Long) => Double]
                   var z: Double = zd
-                  while (currIdx < len) {
+                  while (currIdx < size) {
                     z = sf(z, indexed.longAt(col, currIdx))
                     currIdx += 1
                   }
@@ -2003,7 +2000,7 @@ object Traversal {
                 case _ =>
                   val sf = f.asInstanceOf[(Z, Long) => Z]
                   var z  = zero
-                  while (currIdx < len) {
+                  while (currIdx < size) {
                     z = sf(z, indexed.longAt(col, currIdx))
                     currIdx += 1
                   }
@@ -2015,7 +2012,7 @@ object Traversal {
                 case zi: Int =>
                   val sf     = f.asInstanceOf[(Int, Double) => Int]
                   var z: Int = zi
-                  while (currIdx < len) {
+                  while (currIdx < size) {
                     z = sf(z, indexed.doubleAt(col, currIdx))
                     currIdx += 1
                   }
@@ -2023,7 +2020,7 @@ object Traversal {
                 case zl: Long =>
                   val sf      = f.asInstanceOf[(Long, Double) => Long]
                   var z: Long = zl
-                  while (currIdx < len) {
+                  while (currIdx < size) {
                     z = sf(z, indexed.doubleAt(col, currIdx))
                     currIdx += 1
                   }
@@ -2031,7 +2028,7 @@ object Traversal {
                 case zd: Double =>
                   val sf        = f.asInstanceOf[(Double, Double) => Double]
                   var z: Double = zd
-                  while (currIdx < len) {
+                  while (currIdx < size) {
                     z = sf(z, indexed.doubleAt(col, currIdx))
                     currIdx += 1
                   }
@@ -2039,7 +2036,7 @@ object Traversal {
                 case _ =>
                   val sf = f.asInstanceOf[(Z, Double) => Z]
                   var z  = zero
-                  while (currIdx < len) {
+                  while (currIdx < size) {
                     z = sf(z, indexed.doubleAt(col, currIdx))
                     currIdx += 1
                   }
@@ -2049,7 +2046,7 @@ object Traversal {
               val col = x.asInstanceOf[Col[Boolean]]
               val sf  = f.asInstanceOf[(Z, Boolean) => Z]
               var z   = zero
-              while (currIdx < len) {
+              while (currIdx < size) {
                 z = sf(z, indexed.booleanAt(col, currIdx))
                 currIdx += 1
               }
@@ -2058,7 +2055,7 @@ object Traversal {
               val col = x.asInstanceOf[Col[Byte]]
               val sf  = f.asInstanceOf[(Z, Byte) => Z]
               var z   = zero
-              while (currIdx < len) {
+              while (currIdx < size) {
                 z = sf(z, indexed.byteAt(col, currIdx))
                 currIdx += 1
               }
@@ -2067,7 +2064,7 @@ object Traversal {
               val col = x.asInstanceOf[Col[Short]]
               val sf  = f.asInstanceOf[(Z, Short) => Z]
               var z   = zero
-              while (currIdx < len) {
+              while (currIdx < size) {
                 z = sf(z, indexed.shortAt(col, currIdx))
                 currIdx += 1
               }
@@ -2076,7 +2073,7 @@ object Traversal {
               val col = x.asInstanceOf[Col[Float]]
               val sf  = f.asInstanceOf[(Z, Float) => Z]
               var z   = zero
-              while (currIdx < len) {
+              while (currIdx < size) {
                 z = sf(z, indexed.floatAt(col, currIdx))
                 currIdx += 1
               }
@@ -2085,14 +2082,14 @@ object Traversal {
               val col = x.asInstanceOf[Col[Char]]
               val sf  = f.asInstanceOf[(Z, Char) => Z]
               var z   = zero
-              while (currIdx < len) {
+              while (currIdx < size) {
                 z = sf(z, indexed.charAt(col, currIdx))
                 currIdx += 1
               }
               z
             case _ =>
               var z = zero
-              while (currIdx < len) {
+              while (currIdx < size) {
                 z = f(z, indexed.objectAt(x, currIdx))
                 currIdx += 1
               }
@@ -2146,7 +2143,7 @@ object Traversal {
           else {
             val sizeHint =
               deconstructor match {
-                case indexed: SeqDeconstructor.SpecializedIndexed[Col] => indexed.length(col)
+                case indexed: SeqDeconstructor.SpecializedIndexed[Col] => indexed.size(col)
                 case _                                                 => 8
               }
             val builder = constructor.newObjectBuilder[Any](sizeHint)
@@ -2188,7 +2185,7 @@ object Traversal {
           else {
             val sizeHint =
               deconstructor match {
-                case indexed: SeqDeconstructor.SpecializedIndexed[Col] => indexed.length(col)
+                case indexed: SeqDeconstructor.SpecializedIndexed[Col] => indexed.size(col)
                 case _                                                 => 8
               }
             val builder             = constructor.newObjectBuilder[Any](sizeHint)
@@ -2239,7 +2236,7 @@ object Traversal {
           else {
             val sizeHint =
               deconstructor match {
-                case indexed: SeqDeconstructor.SpecializedIndexed[Col] => indexed.length(col)
+                case indexed: SeqDeconstructor.SpecializedIndexed[Col] => indexed.size(col)
                 case _                                                 => 8
               }
             val builder = constructor.newObjectBuilder[Any](sizeHint)
@@ -2306,12 +2303,12 @@ object Traversal {
     ): Col[A] =
       deconstructor match {
         case indexed: SeqDeconstructor.SpecializedIndexed[Col] =>
-          val len = indexed.length(x)
+          val size = indexed.size(x)
           indexed.elementType(x) match {
             case _: RegisterType.Boolean.type =>
-              val builder = constructor.newBooleanBuilder(len)
+              val builder = constructor.newBooleanBuilder(size)
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addBoolean(
                   builder, {
                     val value = indexed.booleanAt(x.asInstanceOf[Col[Boolean]], currIdx)
@@ -2323,9 +2320,9 @@ object Traversal {
               }
               constructor.resultBoolean(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Byte.type =>
-              val builder = constructor.newByteBuilder(len)
+              val builder = constructor.newByteBuilder(size)
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addByte(
                   builder, {
                     val value = indexed.byteAt(x.asInstanceOf[Col[Byte]], currIdx)
@@ -2337,9 +2334,9 @@ object Traversal {
               }
               constructor.resultByte(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Short.type =>
-              val builder = constructor.newShortBuilder(len)
+              val builder = constructor.newShortBuilder(size)
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addShort(
                   builder, {
                     val value = indexed.shortAt(x.asInstanceOf[Col[Short]], currIdx)
@@ -2351,9 +2348,9 @@ object Traversal {
               }
               constructor.resultShort(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Int.type =>
-              val builder = constructor.newIntBuilder(len)
+              val builder = constructor.newIntBuilder(size)
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addInt(
                   builder, {
                     val value = indexed.intAt(x.asInstanceOf[Col[Int]], currIdx)
@@ -2365,9 +2362,9 @@ object Traversal {
               }
               constructor.resultInt(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Long.type =>
-              val builder = constructor.newLongBuilder(len)
+              val builder = constructor.newLongBuilder(size)
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addLong(
                   builder, {
                     val value = indexed.longAt(x.asInstanceOf[Col[Long]], currIdx)
@@ -2379,9 +2376,9 @@ object Traversal {
               }
               constructor.resultLong(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Float.type =>
-              val builder = constructor.newFloatBuilder(len)
+              val builder = constructor.newFloatBuilder(size)
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addFloat(
                   builder, {
                     val value = indexed.floatAt(x.asInstanceOf[Col[Float]], currIdx)
@@ -2393,9 +2390,9 @@ object Traversal {
               }
               constructor.resultFloat(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Double.type =>
-              val builder = constructor.newDoubleBuilder(len)
+              val builder = constructor.newDoubleBuilder(size)
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addDouble(
                   builder, {
                     val value = indexed.doubleAt(x.asInstanceOf[Col[Double]], currIdx)
@@ -2407,9 +2404,9 @@ object Traversal {
               }
               constructor.resultDouble(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Char.type =>
-              val builder = constructor.newCharBuilder(len)
+              val builder = constructor.newCharBuilder(size)
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addChar(
                   builder, {
                     val value = indexed.charAt(x.asInstanceOf[Col[Char]], currIdx)
@@ -2421,9 +2418,9 @@ object Traversal {
               }
               constructor.resultChar(builder).asInstanceOf[Col[A]]
             case _ =>
-              val builder = constructor.newObjectBuilder[A](len)
+              val builder = constructor.newObjectBuilder[A](size)
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addObject(
                   builder, {
                     val value = indexed.objectAt(x, currIdx)
@@ -2460,15 +2457,15 @@ object Traversal {
     ): Col[A] =
       deconstructor match {
         case indexed: SeqDeconstructor.SpecializedIndexed[Col] =>
-          val len                 = indexed.length(x)
+          val size                = indexed.size(x)
           var colIdx              = indices(0)
           var currIdx, indicesIdx = 0
           indexed.elementType(x) match {
             case _: RegisterType.Boolean.type =>
-              val builder = constructor.newBooleanBuilder(len)
+              val builder = constructor.newBooleanBuilder(size)
               val col     = x.asInstanceOf[Col[Boolean]]
               val sf      = f.asInstanceOf[Boolean => Boolean]
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addBoolean(
                   builder, {
                     val value = indexed.booleanAt(col, currIdx)
@@ -2484,10 +2481,10 @@ object Traversal {
               }
               constructor.resultBoolean(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Byte.type =>
-              val builder = constructor.newByteBuilder(len)
+              val builder = constructor.newByteBuilder(size)
               val col     = x.asInstanceOf[Col[Byte]]
               val sf      = f.asInstanceOf[Byte => Byte]
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addByte(
                   builder, {
                     val value = indexed.byteAt(col, currIdx)
@@ -2503,10 +2500,10 @@ object Traversal {
               }
               constructor.resultByte(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Short.type =>
-              val builder = constructor.newShortBuilder(len)
+              val builder = constructor.newShortBuilder(size)
               val col     = x.asInstanceOf[Col[Short]]
               val sf      = f.asInstanceOf[Short => Short]
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addShort(
                   builder, {
                     val value = indexed.shortAt(col, currIdx)
@@ -2522,10 +2519,10 @@ object Traversal {
               }
               constructor.resultShort(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Int.type =>
-              val builder = constructor.newIntBuilder(len)
+              val builder = constructor.newIntBuilder(size)
               val col     = x.asInstanceOf[Col[Int]]
               val sf      = f.asInstanceOf[Int => Int]
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addInt(
                   builder, {
                     val value = indexed.intAt(col, currIdx)
@@ -2541,10 +2538,10 @@ object Traversal {
               }
               constructor.resultInt(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Long.type =>
-              val builder = constructor.newLongBuilder(len)
+              val builder = constructor.newLongBuilder(size)
               val col     = x.asInstanceOf[Col[Long]]
               val sf      = f.asInstanceOf[Long => Long]
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addLong(
                   builder, {
                     val value = indexed.longAt(col, currIdx)
@@ -2560,10 +2557,10 @@ object Traversal {
               }
               constructor.resultLong(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Float.type =>
-              val builder = constructor.newFloatBuilder(len)
+              val builder = constructor.newFloatBuilder(size)
               val col     = x.asInstanceOf[Col[Float]]
               val sf      = f.asInstanceOf[Float => Float]
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addFloat(
                   builder, {
                     val value = indexed.floatAt(col, currIdx)
@@ -2579,10 +2576,10 @@ object Traversal {
               }
               constructor.resultFloat(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Double.type =>
-              val builder = constructor.newDoubleBuilder(len)
+              val builder = constructor.newDoubleBuilder(size)
               val col     = x.asInstanceOf[Col[Double]]
               val sf      = f.asInstanceOf[Double => Double]
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addDouble(
                   builder, {
                     val value = indexed.doubleAt(col, currIdx)
@@ -2598,10 +2595,10 @@ object Traversal {
               }
               constructor.resultDouble(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Char.type =>
-              val builder = constructor.newCharBuilder(len)
+              val builder = constructor.newCharBuilder(size)
               val col     = x.asInstanceOf[Col[Char]]
               val sf      = f.asInstanceOf[Char => Char]
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addChar(
                   builder, {
                     val value = indexed.charAt(col, currIdx)
@@ -2617,8 +2614,8 @@ object Traversal {
               }
               constructor.resultChar(builder).asInstanceOf[Col[A]]
             case _ =>
-              val builder = constructor.newObjectBuilder[A](len)
-              while (currIdx < len) {
+              val builder = constructor.newObjectBuilder[A](size)
+              while (currIdx < size) {
                 constructor.addObject(
                   builder, {
                     val value = indexed.objectAt(x, currIdx)
@@ -2664,92 +2661,92 @@ object Traversal {
     ): Col[A] =
       deconstructor match {
         case indexed: SeqDeconstructor.SpecializedIndexed[Col] =>
-          val len = indexed.length(x)
+          val size = indexed.size(x)
           indexed.elementType(x) match {
             case _: RegisterType.Boolean.type =>
-              val builder = constructor.newBooleanBuilder(len)
+              val builder = constructor.newBooleanBuilder(size)
               val col     = x.asInstanceOf[Col[Boolean]]
               val sf      = f.asInstanceOf[Boolean => Boolean]
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addBoolean(builder, sf(indexed.booleanAt(col, currIdx)))
                 currIdx += 1
               }
               constructor.resultBoolean(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Byte.type =>
-              val builder = constructor.newByteBuilder(len)
+              val builder = constructor.newByteBuilder(size)
               val col     = x.asInstanceOf[Col[Byte]]
               val sf      = f.asInstanceOf[Byte => Byte]
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addByte(builder, sf(indexed.byteAt(col, currIdx)))
                 currIdx += 1
               }
               constructor.resultByte(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Short.type =>
-              val builder = constructor.newShortBuilder(len)
+              val builder = constructor.newShortBuilder(size)
               val col     = x.asInstanceOf[Col[Short]]
               val sf      = f.asInstanceOf[Short => Short]
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addShort(builder, sf(indexed.shortAt(col, currIdx)))
                 currIdx += 1
               }
               constructor.resultShort(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Int.type =>
-              val builder = constructor.newIntBuilder(len)
+              val builder = constructor.newIntBuilder(size)
               val col     = x.asInstanceOf[Col[Int]]
               val sf      = f.asInstanceOf[Int => Int]
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addInt(builder, sf(indexed.intAt(col, currIdx)))
                 currIdx += 1
               }
               constructor.resultInt(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Long.type =>
-              val builder = constructor.newLongBuilder(len)
+              val builder = constructor.newLongBuilder(size)
               val col     = x.asInstanceOf[Col[Long]]
               val sf      = f.asInstanceOf[Long => Long]
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addLong(builder, sf(indexed.longAt(col, currIdx)))
                 currIdx += 1
               }
               constructor.resultLong(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Float.type =>
-              val builder = constructor.newFloatBuilder(len)
+              val builder = constructor.newFloatBuilder(size)
               val col     = x.asInstanceOf[Col[Float]]
               val sf      = f.asInstanceOf[Float => Float]
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addFloat(builder, sf(indexed.floatAt(col, currIdx)))
                 currIdx += 1
               }
               constructor.resultFloat(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Double.type =>
-              val builder = constructor.newDoubleBuilder(len)
+              val builder = constructor.newDoubleBuilder(size)
               val col     = x.asInstanceOf[Col[Double]]
               val sf      = f.asInstanceOf[Double => Double]
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addDouble(builder, sf(indexed.doubleAt(col, currIdx)))
                 currIdx += 1
               }
               constructor.resultDouble(builder).asInstanceOf[Col[A]]
             case _: RegisterType.Char.type =>
-              val builder = constructor.newCharBuilder(len)
+              val builder = constructor.newCharBuilder(size)
               val col     = x.asInstanceOf[Col[Char]]
               val sf      = f.asInstanceOf[Char => Char]
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addChar(builder, sf(indexed.charAt(col, currIdx)))
                 currIdx += 1
               }
               constructor.resultChar(builder).asInstanceOf[Col[A]]
             case _ =>
-              val builder = constructor.newObjectBuilder[A](len)
+              val builder = constructor.newObjectBuilder[A](size)
               var currIdx = 0
-              while (currIdx < len) {
+              while (currIdx < size) {
                 constructor.addObject(builder, f(indexed.objectAt(x, currIdx)))
                 currIdx += 1
               }

@@ -106,7 +106,7 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema[Long].reflect.asTerm("_4")
                 ),
                 typeName = TypeName(
-                  namespace = Namespace(packages = Seq("scala")),
+                  namespace = Namespace(Seq("scala")),
                   name = "Tuple4",
                   params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
                 ),
@@ -154,7 +154,7 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema[Long].reflect.asTerm("_4")
                 ),
                 typeName = TypeName(
-                  namespace = Namespace(packages = Seq("scala")),
+                  namespace = Namespace(Seq("scala")),
                   name = "Tuple4",
                   params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
                 ),
@@ -301,7 +301,7 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
             equalTo(
               SchemaError(errors =
                 ::(
-                  SchemaError.InvalidType(
+                  SchemaError.ExpectationMismatch(
                     source = DynamicOptic(nodes = Vector(DynamicOptic.Node.Field(name = "id"))),
                     expectation = "Expected Id: Expected a string with letter or digit characters"
                   ),
@@ -350,7 +350,7 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
             equalTo(
               SchemaError(errors =
                 ::(
-                  SchemaError.InvalidType(
+                  SchemaError.ExpectationMismatch(
                     source = DynamicOptic(nodes = Vector(DynamicOptic.Node.Field(name = "id"))),
                     expectation = "Expected InnerId: Expected a string with letter or digit characters"
                   ),
@@ -562,6 +562,10 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         assert(traversal7.fold(IArray(1: Short, 2: Short, 3: Short))(0, _ + _))(equalTo(6)) &&
         assert(traversal8.fold(IArray(1.0f, 2.0f, 3.0f))(0.0f, _ + _))(equalTo(6.0f)) &&
         assert(traversal9.fold(IArray(1.0, 2.0, 3.0))(0.0, _ + _))(equalTo(6.0))
+      },
+      test("derives schema for array and IArray of opaque sub-types") {
+        assert(Schema.derived[Array[StructureId]])(equalTo(Schema.derived[Array[String]])) &&
+        assert(Schema.derived[IArray[StructureId]])(equalTo(Schema.derived[IArray[String]]))
       }
     ),
     suite("Reflect.Variant")(
@@ -670,6 +674,19 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         val variant = schema.reflect.asVariant
         assert(variant.map(_.cases(0).name))(isSome(equalTo("Case1")))
       },
+      test("derives schema for options of opaque sub-types") {
+        val schema = Schema.derived[Option[StructureId]]
+        assert(schema.reflect.typeName)(
+          equalTo(
+            TypeName.option(
+              TypeName[StructureId](
+                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("OpaqueTypes$package")),
+                name = "StructureId"
+              )
+            )
+          )
+        )
+      },
       test("derives schema for type recursive Scala 3 enums") {
         val schema  = Schema.derived[FruitEnum[?]]
         val variant = schema.reflect.asVariant
@@ -723,6 +740,7 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
         assert(Value.tuple_1.replace((1, true), 2))(equalTo((2, true))) &&
         assert(schema.fromDynamicValue(schema.toDynamicValue(123)))(isRight(equalTo(123))) &&
         assert(schema.fromDynamicValue(schema.toDynamicValue(true)))(isRight(equalTo(true))) &&
+        assert(schema)(equalTo(Schema.derived[Int | Boolean | (Int, Boolean) | List[Int] | Map[Int, Long]])) &&
         assert(schema)(not(equalTo(Schema.derived[Boolean | Int]))) &&
         assert(variant.map(_.cases.map(_.name)))(
           isSome(equalTo(Vector("Int", "Boolean", "Tuple2", "collection.immutable.List", "collection.immutable.Map")))
@@ -745,21 +763,52 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
           )
         )
       },
-      test("derives schema for case classes with Scala 3 union fields") {
+      test("derives schema for Scala 3 unions defined as opaque types") {
+        val schema  = Schema.derived[Variant]
+        val variant = schema.reflect.asVariant
+        assert(
+          Variant(123) match {
+            case _: Int => true
+            case _      => false
+          }
+        )(equalTo(true)) &&
+        assert(schema)(not(equalTo(Schema.derived[Int | String | Boolean]))) && // the difference in type names
+        assert(schema.fromDynamicValue(schema.toDynamicValue(Variant(123))))(isRight(equalTo(Variant(123)))) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(Variant(true))))(isRight(equalTo(Variant(true)))) &&
+        assert(schema.fromDynamicValue(schema.toDynamicValue(Variant("VVV"))))(isRight(equalTo(Variant("VVV")))) &&
+        assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("Int", "String", "Boolean")))) &&
+        assert(variant.map(_.typeName))(
+          isSome(equalTo(TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("OpaqueTypes$package")), "Variant")))
+        )
+      },
+      test("derives schema for case classes with fields of Scala 3 union types that have duplicated sub-types") {
         type Value1 = Int | Boolean
-        type Value2 = Int | String
+        type Value2 = Int | String | Int
 
-        case class Unions(v1: Value1, v2: Value2)
+        case class Unions(v1: Value1, v2: Value2, v3: Value1 | Value2)
 
         implicit val schema: Schema[Unions] = Schema.derived
 
         object Unions extends CompanionOptics[Unions] {
-          val v1: Lens[Unions, Value1] = $(_.v1)
-          val v2: Lens[Unions, Value2] = $(_.v2)
+          val v1: Lens[Unions, Value1]          = $(_.v1)
+          val v2: Lens[Unions, Value2]          = $(_.v2)
+          val v3: Lens[Unions, Value1 | Value2] = $(_.v3)
+          val v3_s: Optional[Unions, String]    = $(_.v3.when[String])
         }
 
-        val value1 = Unions(123, 321)
-        val value2 = Unions(true, "VVV")
+        val value1 = Unions(123, 321, "VVV")
+        val value2 = Unions(true, "VVV", 213)
+        val record = schema.reflect.asRecord
+        assert(Unions.v1.get(value2))(equalTo(true)) &&
+        assert(Unions.v2.get(value2))(equalTo("VVV")) &&
+        assert(Unions.v3.get(value2))(equalTo(213)) &&
+        assert(Unions.v3_s.getOption(value1))(isSome(equalTo("VVV"))) &&
+        assert(record.flatMap(_.fields(1).value.asVariant.map(_.cases.map(_.name))))(
+          isSome(equalTo(Seq("Int", "String"))) // deduplicates union cases without re-ordering
+        ) &&
+        assert(record.flatMap(_.fields(2).value.asVariant.map(_.cases.map(_.name))))(
+          isSome(equalTo(Seq("Int", "Boolean", "String"))) // deduplicates union cases without re-ordering
+        ) &&
         assert(schema.fromDynamicValue(schema.toDynamicValue(value1)))(isRight(equalTo(value1))) &&
         assert(schema.fromDynamicValue(schema.toDynamicValue(value2)))(isRight(equalTo(value2)))
       },
@@ -826,22 +875,24 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
   )
 
   /** Variant: Color */
-  enum Color(val rgb: Int) derives Schema:
+  enum Color(val rgb: Int) derives Schema {
+
     /** Term: Red */
-    @Modifier.config("term-key-1", "term-value-1") @Modifier.config("term-key-1", "term-value-2") case Red
-        extends Color(0xff0000)
+    @Modifier.config("term-key-1", "term-value-1") @Modifier.config("term-key-1", "term-value-2")
+    case Red extends Color(0xff0000)
 
     /** Term: Green */
-    @Modifier.config("term-key-2", "term-value-1") @Modifier.config("term-key-2", "term-value-2") case Green
-        extends Color(0x00ff00)
+    @Modifier.config("term-key-2", "term-value-1") @Modifier.config("term-key-2", "term-value-2")
+    case Green extends Color(0x00ff00)
 
     /** Term: Blue */
-    @Modifier.config("term-key-3", "term-value-1") @Modifier.config("term-key-3", "term-value-2") case Blue
-        extends Color(0x0000ff)
+    @Modifier.config("term-key-3", "term-value-1") @Modifier.config("term-key-3", "term-value-2")
+    case Blue extends Color(0x0000ff)
 
     /** Type: Mix */
-    @Modifier.config("type-key", "type-value-1") @Modifier.config("type-key", "type-value-2") case Mix(mix: Int)
-        extends Color(mix)
+    @Modifier.config("type-key", "type-value-1") @Modifier.config("type-key", "type-value-2")
+    case Mix(mix: Int) extends Color(mix)
+  }
 
   object Color extends CompanionOptics[Color] {
     val red: Prism[Color, Color.Red.type]     = $(_.when[Color.Red.type])
@@ -851,17 +902,23 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
     val mix_mix: Optional[Color, Int]         = $(_.when[Color.Mix].mix)
   }
 
-  enum FruitEnum[T <: FruitEnum[T]]:
-    case Apple(color: String)      extends FruitEnum[Apple]
+  enum FruitEnum[T <: FruitEnum[T]] {
+    case Apple(color: String) extends FruitEnum[Apple]
+
     case Banana(curvature: Double) extends FruitEnum[Banana]
+  }
 
-  enum LinkedList[+T]:
+  enum LinkedList[+T] {
     case End
-    case Node(value: T, @Modifier.config("field-key", "field-value") next: LinkedList[T])
 
-  enum HKEnum[A[_]]:
-    case Case1(a: A[Int])    extends HKEnum[A]
+    case Node(value: T, @Modifier.config("field-key", "field-value") next: LinkedList[T])
+  }
+
+  enum HKEnum[A[_]] {
+    case Case1(a: A[Int]) extends HKEnum[A]
+
     case Case2(a: A[String]) extends HKEnum[A]
+  }
 
   case class Box1(l: Long) extends AnyVal derives Schema
 
@@ -874,6 +931,7 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
       Reflect.Wrapper(
         wrapped = Reflect.string[Binding], // Cannot use `Schema[String].reflect` here
         typeName = TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaVersionSpecificSpec")), "InnerId"),
+        wrapperPrimitiveType = Some(PrimitiveType.String(Validation.None)),
         wrapperBinding = Binding.Wrapper(s => InnerId(s), identity)
       )
     )
@@ -919,6 +977,7 @@ object Id {
     Reflect.Wrapper(
       wrapped = Reflect.string[Binding], // Cannot use `Schema[String].reflect` here
       typeName = TypeName(Namespace.zioBlocksSchema, "Id"),
+      wrapperPrimitiveType = Some(PrimitiveType.String(Validation.None)),
       wrapperBinding = Binding.Wrapper(s => Id(s), identity)
     )
   )
