@@ -2,7 +2,6 @@ package zio.blocks.blobstore
 
 import zio.prelude.ZValidation
 
-import scala.collection.immutable.ArraySeq
 import scala.util.control.NoStackTrace
 
 /**
@@ -38,11 +37,7 @@ trait BlobStore {
   def list(prefix: BlobKeyPrefix): Either[BlobStoreError, Vector[BlobKey]]
 }
 
-object BlobStore {
-
-  /** A simple in-memory implementation, useful for tests. */
-  def inMemory: BlobStore = new InMemoryBlobStore()
-}
+object BlobStore {}
 
 final case class BlobMetadata(key: BlobKey, size: Long)
 
@@ -147,47 +142,4 @@ object BlobStoreError {
   final case class InvalidPrefix(message: String)     extends BlobStoreError
   final case class StorageCorruption(message: String) extends BlobStoreError
   final case class Unexpected(message: String)        extends BlobStoreError
-}
-
-final class InMemoryBlobStore() extends BlobStore {
-  private[this] val lock: AnyRef                     = new AnyRef
-  private[this] var state: Map[BlobKey, Array[Byte]] = Map.empty
-
-  override def put(key: BlobKey, bytes: Array[Byte]): Either[BlobStoreError, BlobMetadata] =
-    if (bytes eq null) Left(BlobStoreError.Unexpected("Bytes must not be null"))
-    else {
-      val copy = bytes.clone()
-      lock.synchronized {
-        state = state.updated(key, copy)
-      }
-      Right(BlobMetadata(key, copy.length.toLong))
-    }
-
-  override def get(key: BlobKey): Either[BlobStoreError, Option[Array[Byte]]] =
-    lock.synchronized {
-      Right(state.get(key).map(_.clone()))
-    }
-
-  override def head(key: BlobKey): Either[BlobStoreError, Option[BlobMetadata]] =
-    lock.synchronized {
-      Right(state.get(key).map(bytes => BlobMetadata(key, bytes.length.toLong)))
-    }
-
-  override def delete(key: BlobKey): Either[BlobStoreError, Boolean] =
-    lock.synchronized {
-      val existed = state.contains(key)
-      if (existed) state = state - key
-      Right(existed)
-    }
-
-  override def list(prefix: BlobKeyPrefix): Either[BlobStoreError, Vector[BlobKey]] =
-    lock.synchronized {
-      val keys =
-        if (prefix.value.isEmpty) state.keysIterator
-        else state.keysIterator.filter(_.value.startsWith(prefix.value))
-
-      Right(
-        keys.toArray.sorted.to(ArraySeq).toVector
-      )
-    }
 }

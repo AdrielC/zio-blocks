@@ -8,7 +8,7 @@ object BlobStoreSpec extends ZIOSpecDefault {
   override def spec: Spec[TestEnvironment, Any] =
     suite("BlobStoreSpec")(
       test("put/get round-trips bytes") {
-        val store      = BlobStore.inMemory
+        val store      = new InMemoryBlobStore()
         val Right(key) = BlobKey.either("a/b/c.bin"): @unchecked
         val bytes      = Array[Byte](1, 2, 3, 4)
 
@@ -16,7 +16,7 @@ object BlobStoreSpec extends ZIOSpecDefault {
         assert(store.get(key).map(_.map(_.toVector)))(isRight(isSome(equalTo(bytes.toVector))))
       },
       test("put defensively copies the input array") {
-        val store      = BlobStore.inMemory
+        val store      = new InMemoryBlobStore()
         val Right(key) = BlobKey.either("x"): @unchecked
         val bytes      = Array[Byte](1, 2, 3)
 
@@ -26,7 +26,7 @@ object BlobStoreSpec extends ZIOSpecDefault {
         assert(store.get(key).map(_.map(_.toVector)))(isRight(isSome(equalTo(Array[Byte](1, 2, 3).toVector))))
       },
       test("get defensively copies the stored array") {
-        val store      = BlobStore.inMemory
+        val store      = new InMemoryBlobStore()
         val Right(key) = BlobKey.either("x"): @unchecked
 
         store.put(key, Array[Byte](1, 2, 3))
@@ -36,7 +36,7 @@ object BlobStoreSpec extends ZIOSpecDefault {
         assert(store.get(key).map(_.map(_.toVector)))(isRight(isSome(equalTo(Array[Byte](1, 2, 3).toVector))))
       },
       test("head returns metadata without content") {
-        val store      = BlobStore.inMemory
+        val store      = new InMemoryBlobStore()
         val Right(key) = BlobKey.either("k"): @unchecked
 
         store.put(key, Array.fill[Byte](10)(42))
@@ -44,7 +44,7 @@ object BlobStoreSpec extends ZIOSpecDefault {
         assert(store.head(key))(isRight(isSome(equalTo(BlobMetadata(key, 10L)))))
       },
       test("delete returns whether the key existed") {
-        val store      = BlobStore.inMemory
+        val store      = new InMemoryBlobStore()
         val Right(key) = BlobKey.either("k"): @unchecked
 
         assert(store.delete(key))(isRight(equalTo(false))) &&
@@ -53,7 +53,7 @@ object BlobStoreSpec extends ZIOSpecDefault {
         assert(store.delete(key))(isRight(equalTo(false)))
       },
       test("list returns keys with a prefix in lexicographic order") {
-        val store     = BlobStore.inMemory
+        val store     = new InMemoryBlobStore()
         val Right(a1) = BlobKey.either("a/1"): @unchecked
         val Right(a2) = BlobKey.either("a/2"): @unchecked
         val Right(b1) = BlobKey.either("b/1"): @unchecked
