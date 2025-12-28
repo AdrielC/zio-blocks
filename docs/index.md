@@ -58,6 +58,7 @@ Here are the key features that make ZIO Blocks stand out:
    - **MessagePack** – Efficient binary serialization
 4. **Reflective Optics**: Combines traditional optics with embedded structural metadata that captures the actual structure of your data types. This enables type-safe introspection, writing DSLs, and dynamic customization of your data models.
 5. **Automatic Derivation**: By implementing a few core methods, you can automatically derive type class instances for all your types, eliminating boilerplate code generation.
+6. **BlobStore (experimental)**: A new, evolving blob-store API. See the [BlobStore reference](reference/blobstore.md).
 
 ## Installation
 
