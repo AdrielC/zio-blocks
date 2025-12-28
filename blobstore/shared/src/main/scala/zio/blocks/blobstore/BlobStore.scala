@@ -64,6 +64,15 @@ object BlobKey {
     else if (value.indexOf('\u0000') >= 0) Left(BlobStoreError.InvalidKey("Key must not contain NUL"))
     else Right(new BlobKey(value))
 
+  /**
+   * Constructs a [[BlobKey]] without validation.
+   *
+   * This is intended for internal use by implementations that only ever persist
+   * already-validated keys.
+   */
+  private[blobstore] def unsafeFromValidString(value: String): BlobKey =
+    new BlobKey(value)
+
   def unsafeFromString(value: String): BlobKey =
     fromString(value) match {
       case Right(k) => k
@@ -146,7 +155,7 @@ final class InMemoryBlobStore() extends BlobStore {
 
       Right(
         keys.toArray.sorted.iterator
-          .map(s => new BlobKey(s))
+          .map(BlobKey.unsafeFromValidString)
           .to(ArraySeq)
           .toVector
       )
