@@ -6,8 +6,9 @@ import scala.util.control.NoStackTrace
 /**
  * A minimal, dependency-free blob store API.
  *
- * This API is intentionally synchronous and side-effecting (it does not depend on ZIO/Cats Effect).
- * Downstream users can wrap these operations in their effect system of choice.
+ * This API is intentionally synchronous and side-effecting (it does not depend
+ * on ZIO/Cats Effect). Downstream users can wrap these operations in their
+ * effect system of choice.
  */
 trait BlobStore {
 
@@ -47,9 +48,9 @@ final case class BlobMetadata(key: BlobKey, size: Long)
  * A validated blob key.
  *
  * Invariants:
- * - non-empty
- * - does not start with '/'
- * - does not contain NUL
+ *   - non-empty
+ *   - does not start with '/'
+ *   - does not contain NUL
  */
 final case class BlobKey private (value: String) extends AnyVal {
   override def toString: String = value
@@ -74,9 +75,9 @@ object BlobKey {
  * A validated prefix. Empty prefix means "everything".
  *
  * Invariants:
- * - not null
- * - does not start with '/'
- * - does not contain NUL
+ *   - not null
+ *   - does not start with '/'
+ *   - does not contain NUL
  */
 final case class BlobKeyPrefix private (value: String) extends AnyVal {
   override def toString: String = value
@@ -87,7 +88,8 @@ object BlobKeyPrefix {
 
   def fromString(value: String): Either[BlobStoreError, BlobKeyPrefix] =
     if (value eq null) Left(BlobStoreError.InvalidPrefix("Prefix must not be null"))
-    else if (value.nonEmpty && value.charAt(0) == '/') Left(BlobStoreError.InvalidPrefix("Prefix must not start with '/'"))
+    else if (value.nonEmpty && value.charAt(0) == '/')
+      Left(BlobStoreError.InvalidPrefix("Prefix must not start with '/'"))
     else if (value.indexOf('\u0000') >= 0) Left(BlobStoreError.InvalidPrefix("Prefix must not contain NUL"))
     else Right(new BlobKeyPrefix(value))
 }
@@ -99,14 +101,14 @@ sealed trait BlobStoreError extends Exception with NoStackTrace {
 }
 
 object BlobStoreError {
-  final case class InvalidKey(message: String) extends BlobStoreError
-  final case class InvalidPrefix(message: String) extends BlobStoreError
+  final case class InvalidKey(message: String)        extends BlobStoreError
+  final case class InvalidPrefix(message: String)     extends BlobStoreError
   final case class StorageCorruption(message: String) extends BlobStoreError
-  final case class Unexpected(message: String) extends BlobStoreError
+  final case class Unexpected(message: String)        extends BlobStoreError
 }
 
 final class InMemoryBlobStore() extends BlobStore {
-  private[this] val lock: AnyRef = new AnyRef
+  private[this] val lock: AnyRef                    = new AnyRef
   private[this] var state: Map[String, Array[Byte]] = Map.empty
 
   override def put(key: BlobKey, bytes: Array[Byte]): Either[BlobStoreError, BlobMetadata] =
@@ -143,13 +145,10 @@ final class InMemoryBlobStore() extends BlobStore {
         else state.keysIterator.filter(_.startsWith(prefix.value))
 
       Right(
-        keys.toArray
-          .sorted
-          .iterator
+        keys.toArray.sorted.iterator
           .map(s => new BlobKey(s))
           .to(ArraySeq)
           .toVector
       )
     }
 }
-

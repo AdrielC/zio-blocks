@@ -66,11 +66,12 @@ object BlobStoreSpec extends ZIOSpecDefault {
         assert(store.list(prefix))(isRight(equalTo(Vector(a1, a2))))
       },
       test("BlobKey validation rejects empty and absolute keys") {
-        assert(BlobKey.fromString(""))(isLeft(hasField("message", (_: BlobStoreError).message, containsString("empty")))) &&
+        assert(BlobKey.fromString(""))(
+          isLeft(hasField("message", (_: BlobStoreError).message, containsString("empty")))
+        ) &&
         assert(BlobKey.fromString("/abs"))(
           isLeft(hasField("message", (_: BlobStoreError).message, containsString("start with '/'")))
         )
       }
     )
 }
-
