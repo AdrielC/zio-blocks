@@ -3,8 +3,8 @@ package zio.blocks.schema
 /**
  * Runtime owner information for a type identifier.
  *
- * This is intentionally "boring": it captures the package path and the chain
- * of enclosing values / types (e.g. objects) as strings.
+ * This is intentionally "boring": it captures the package path and the chain of
+ * enclosing values / types (e.g. objects) as strings.
  */
 final case class Owner(packages: List[String], values: List[String] = Nil) {
   lazy val elements: List[String] = packages ::: values

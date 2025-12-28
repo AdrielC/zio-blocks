@@ -11,7 +11,7 @@ object TypeId extends TypeIdVersionSpecific {
 
   // Type-level naturals for arity.
   sealed trait Nat
-  sealed trait _0 extends Nat
+  sealed trait _0             extends Nat
   sealed trait Succ[N <: Nat] extends Nat
 
   type _1 = Succ[_0]
@@ -21,9 +21,9 @@ object TypeId extends TypeIdVersionSpecific {
   type _5 = Succ[_4]
 
   sealed trait KindTag { type Arity <: Nat }
-  object KindTag {
-    sealed trait Type extends KindTag { type Arity = _0 }
-    sealed trait Constructor[N <: Nat] extends KindTag { type Arity = N }
+  object KindTag       {
+    sealed trait Type                  extends KindTag { type Arity = _0 }
+    sealed trait Constructor[N <: Nat] extends KindTag { type Arity = N  }
   }
 
   type Id[+K <: KindTag] = TypeIdRepr @@ K
@@ -51,10 +51,10 @@ object TypeId extends TypeIdVersionSpecific {
   val bigInt: OfType     = ofType(new TypeIdRepr(Owner.fromNamespace(Namespace.scala), "BigInt", Nil))
   val bigDecimal: OfType = ofType(new TypeIdRepr(Owner.fromNamespace(Namespace.scala), "BigDecimal", Nil))
 
-  val dayOfWeek: OfType  = ofType(new TypeIdRepr(Owner.fromNamespace(Namespace.javaTime), "DayOfWeek", Nil))
-  val duration: OfType   = ofType(new TypeIdRepr(Owner.fromNamespace(Namespace.javaTime), "Duration", Nil))
-  val instant: OfType    = ofType(new TypeIdRepr(Owner.fromNamespace(Namespace.javaTime), "Instant", Nil))
-  val localDate: OfType  = ofType(new TypeIdRepr(Owner.fromNamespace(Namespace.javaTime), "LocalDate", Nil))
+  val dayOfWeek: OfType     = ofType(new TypeIdRepr(Owner.fromNamespace(Namespace.javaTime), "DayOfWeek", Nil))
+  val duration: OfType      = ofType(new TypeIdRepr(Owner.fromNamespace(Namespace.javaTime), "Duration", Nil))
+  val instant: OfType       = ofType(new TypeIdRepr(Owner.fromNamespace(Namespace.javaTime), "Instant", Nil))
+  val localDate: OfType     = ofType(new TypeIdRepr(Owner.fromNamespace(Namespace.javaTime), "LocalDate", Nil))
   val localDateTime: OfType =
     ofType(new TypeIdRepr(Owner.fromNamespace(Namespace.javaTime), "LocalDateTime", Nil))
   val localTime: OfType      = ofType(new TypeIdRepr(Owner.fromNamespace(Namespace.javaTime), "LocalTime", Nil))
@@ -102,7 +102,7 @@ object TypeId extends TypeIdVersionSpecific {
   private[this] val _set        = new TypeIdRepr(Owner.fromNamespace(Namespace.scalaCollectionImmutable), "Set", Nil)
   private[this] val _vector     = new TypeIdRepr(Owner.fromNamespace(Namespace.scalaCollectionImmutable), "Vector", Nil)
   private[this] val _arraySeq   = new TypeIdRepr(Owner.fromNamespace(Namespace.scalaCollectionImmutable), "ArraySeq", Nil)
-  private[this] val _indexedSeq = new TypeIdRepr(Owner.fromNamespace(Namespace.scalaCollectionImmutable), "IndexedSeq", Nil)
-  private[this] val _seq        = new TypeIdRepr(Owner.fromNamespace(Namespace.scalaCollectionImmutable), "Seq", Nil)
+  private[this] val _indexedSeq =
+    new TypeIdRepr(Owner.fromNamespace(Namespace.scalaCollectionImmutable), "IndexedSeq", Nil)
+  private[this] val _seq = new TypeIdRepr(Owner.fromNamespace(Namespace.scalaCollectionImmutable), "Seq", Nil)
 }
-

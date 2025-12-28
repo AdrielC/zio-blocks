@@ -235,7 +235,9 @@ object ReflectSpec extends ZIOSpecDefault {
       test("has consistent equals and hashCode") {
         val record1 = tuple4Reflect
         val record2 = record1.copy(typeId =
-          TypeId.unsafeTag[TypeId.KindTag.Type](new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil), "Tuple4", Nil))
+          TypeId.unsafeTag[TypeId.KindTag.Type](
+            new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil), "Tuple4", Nil)
+          )
         )
         val record3 = record1.copy(fields = record1.fields.reverse)
         val record4 = record1.copy(doc = Doc("text"))
@@ -300,14 +302,22 @@ object ReflectSpec extends ZIOSpecDefault {
           tuple4Reflect
             .typeId(
               TypeId.unsafeTag[TypeId.KindTag.Type](
-                new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil), "Tuple4Wrapper", Nil)
+                new TypeIdRepr(
+                  new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil),
+                  "Tuple4Wrapper",
+                  Nil
+                )
               )
             )
             .typeId
         )(
           equalTo(
             TypeId.unsafeTag[TypeId.KindTag.Type](
-              new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil), "Tuple4Wrapper", Nil)
+              new TypeIdRepr(
+                new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil),
+                "Tuple4Wrapper",
+                Nil
+              )
             )
           )
         )
@@ -405,14 +415,22 @@ object ReflectSpec extends ZIOSpecDefault {
           eitherReflect
             .typeId(
               TypeId.unsafeTag[TypeId.KindTag.Type](
-                new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil), "EitherWrapper", Nil)
+                new TypeIdRepr(
+                  new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil),
+                  "EitherWrapper",
+                  Nil
+                )
               )
             )
             .typeId
         )(
           equalTo(
             TypeId.unsafeTag[TypeId.KindTag.Type](
-              new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil), "EitherWrapper", Nil)
+              new TypeIdRepr(
+                new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil),
+                "EitherWrapper",
+                Nil
+              )
             )
           )
         )
@@ -520,7 +538,7 @@ object ReflectSpec extends ZIOSpecDefault {
         )
       },
       test("gets and updates sequence type name") {
-        val sequence1 = Reflect.vector(Reflect.int[Binding])
+        val sequence1        = Reflect.vector(Reflect.int[Binding])
         val expectedVectorId =
           TypeId.unsafeTag[TypeId.KindTag.Type](
             new TypeIdRepr(
@@ -536,14 +554,22 @@ object ReflectSpec extends ZIOSpecDefault {
           sequence1
             .typeId(
               TypeId.unsafeTag[TypeId.KindTag.Type](
-                new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil), "VectorWrapper", Nil)
+                new TypeIdRepr(
+                  new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil),
+                  "VectorWrapper",
+                  Nil
+                )
               )
             )
             .typeId
         )(
           equalTo(
             TypeId.unsafeTag[TypeId.KindTag.Type](
-              new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil), "VectorWrapper", Nil)
+              new TypeIdRepr(
+                new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil),
+                "VectorWrapper",
+                Nil
+              )
             )
           )
         )
@@ -628,7 +654,7 @@ object ReflectSpec extends ZIOSpecDefault {
         )
       },
       test("gets and updates map type name") {
-        val map1 = Reflect.map(Reflect.int[Binding], Reflect.long[Binding])
+        val map1          = Reflect.map(Reflect.int[Binding], Reflect.long[Binding])
         val expectedMapId =
           TypeId.unsafeTag[TypeId.KindTag.Type](
             new TypeIdRepr(
@@ -732,14 +758,22 @@ object ReflectSpec extends ZIOSpecDefault {
           dynamic1
             .typeId(
               TypeId.unsafeTag[TypeId.KindTag.Type](
-                new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil), "DynamicWrapper", Nil)
+                new TypeIdRepr(
+                  new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil),
+                  "DynamicWrapper",
+                  Nil
+                )
               )
             )
             .typeId
         )(
           equalTo(
             TypeId.unsafeTag[TypeId.KindTag.Type](
-              new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil), "DynamicWrapper", Nil)
+              new TypeIdRepr(
+                new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil),
+                "DynamicWrapper",
+                Nil
+              )
             )
           )
         )
@@ -780,7 +814,9 @@ object ReflectSpec extends ZIOSpecDefault {
       test("has consistent equals and hashCode") {
         val wrapper1 = wrapperReflect
         val wrapper2 = wrapper1.copy(typeId =
-          TypeId.unsafeTag[TypeId.KindTag.Type](new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil), "Tuple4", Nil))
+          TypeId.unsafeTag[TypeId.KindTag.Type](
+            new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil), "Tuple4", Nil)
+          )
         )
         val wrapper3 = wrapper1.copy(wrapped = Reflect.long[Binding].doc("Long (updated)"))
         val wrapper4 = wrapper1.copy(doc = Doc("text"))
@@ -884,7 +920,11 @@ object ReflectSpec extends ZIOSpecDefault {
           deferred1
             .typeId(
               TypeId.unsafeTag[TypeId.KindTag.Type](
-                new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil), "YearWrapper", Nil)
+                new TypeIdRepr(
+                  new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil),
+                  "YearWrapper",
+                  Nil
+                )
               )
             )
             .typeId
@@ -951,10 +991,9 @@ object ReflectSpec extends ZIOSpecDefault {
     Schema.derived[Either[Int, Long]].reflect.asVariant.get
   val wrapperReflect: Reflect.Wrapper[Binding, Wrapper, Long] = new Reflect.Wrapper(
     wrapped = Schema[Long].reflect,
-    typeId =
-      TypeId.unsafeTag[TypeId.KindTag.Type](
-        new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil), "Wrapper", Nil)
-      ),
+    typeId = TypeId.unsafeTag[TypeId.KindTag.Type](
+      new TypeIdRepr(new Owner("zio" :: "blocks" :: "schema" :: Nil, "ReflectSpec" :: Nil), "Wrapper", Nil)
+    ),
     wrapperPrimitiveType = None,
     wrapperBinding = Binding.Wrapper(
       wrap = (x: Long) => Right(Wrapper(x)),

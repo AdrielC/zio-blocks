@@ -170,7 +170,7 @@ private object SchemaVersionSpecific {
     }
 
     def toReprTree(typeId: TypeIdRepr): Tree = {
-      val owner = typeId.owner
+      val owner  = typeId.owner
       val params = typeId.params.map { p =>
         q"new _root_.zio.blocks.schema.TypeParam(${toReprTree(p.id)})"
       }
@@ -455,8 +455,8 @@ private object SchemaVersionSpecific {
       } else if (isNonAbstractScalaClass(tpe)) {
         deriveSchemaForNonAbstractScalaClass(tpe)
       } else if (isZioPreludeNewtype(tpe)) {
-        val schema  = findImplicitOrDeriveSchema(zioPreludeNewtypeDealias(tpe))
-        val tpeId = toTree(typeId(tpe))
+        val schema = findImplicitOrDeriveSchema(zioPreludeNewtypeDealias(tpe))
+        val tpeId  = toTree(typeId(tpe))
         q"new Schema($schema.reflect.typeId($tpeId)).asInstanceOf[Schema[$tpe]]"
       } else cannotDeriveSchema(tpe)
 

@@ -167,7 +167,8 @@ object SchemaSpec extends ZIOSpecDefault {
                   Schema[Int].reflect.asTerm("_3"),
                   Schema[Long].reflect.asTerm("_4")
                 ),
-                typeId = tid(Namespace(Seq("scala")), "Tuple4", Seq(TypeId.byte, TypeId.short, TypeId.int, TypeId.long)),
+                typeId =
+                  tid(Namespace(Seq("scala")), "Tuple4", Seq(TypeId.byte, TypeId.short, TypeId.int, TypeId.long)),
                 recordBinding = null
               )
             )

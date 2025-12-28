@@ -800,8 +800,8 @@ private class SchemaVersionSpecificImpl(using Quotes) {
           val typeInfo =
             if (isGenericTuple(tTpe)) new GenericTupleInfo[tt](tTpe)
             else new ClassInfo[tt](tTpe)
-          val fields  = typeInfo.fields[tt](Array.empty[String])
-          val tpeId = toExpr(typeId(tTpe))
+          val fields = typeInfo.fields[tt](Array.empty[String])
+          val tpeId  = toExpr(typeId(tTpe))
           '{
             new Schema(
               reflect = new Reflect.Record[Binding, tt](
@@ -870,8 +870,8 @@ private class SchemaVersionSpecificImpl(using Quotes) {
           val typeInfo =
             if (isGenericTuple(tTpe)) new GenericTupleInfo[tt](tTpe)
             else new ClassInfo[tt](tTpe)
-          val fields  = typeInfo.fields[T](nameOverrides)
-          val tpeId = toExpr(typeId(tpe))
+          val fields = typeInfo.fields[T](nameOverrides)
+          val tpeId  = toExpr(typeId(tpe))
           '{
             new Schema(
               reflect = new Reflect.Record[Binding, T](

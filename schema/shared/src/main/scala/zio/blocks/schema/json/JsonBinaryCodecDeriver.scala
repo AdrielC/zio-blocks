@@ -2419,8 +2419,8 @@ class JsonBinaryCodecDeriver private[json] (
     }
 
   private[this] def option[F[_, _], A](variant: Reflect.Variant[F, A]): Option[Reflect[F, ?]] = {
-    val typeId   = variant.typeId
-    val cases    = variant.cases
+    val typeId = variant.typeId
+    val cases  = variant.cases
     if (
       typeId.owner == Owner.fromNamespace(Namespace.scala) && typeId.name == "Option" &&
       cases.length == 2 && cases(1).name == "Some"
@@ -2430,9 +2430,9 @@ class JsonBinaryCodecDeriver private[json] (
 
   private[this] def isOptional[F[_, _], A](reflect: Reflect[F, A]): Boolean =
     !requireOptionFields && reflect.isVariant && {
-      val variant  = reflect.asVariant.get
-      val typeId   = reflect.typeId
-      val cases    = variant.cases
+      val variant = reflect.asVariant.get
+      val typeId  = reflect.typeId
+      val cases   = variant.cases
       typeId.owner == Owner.fromNamespace(Namespace.scala) && typeId.name == "Option" &&
       cases.length == 2 && cases(1).name == "Some"
     }

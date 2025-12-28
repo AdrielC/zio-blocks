@@ -105,11 +105,13 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema[Int].reflect.asTerm("_3"),
                   Schema[Long].reflect.asTerm("_4")
                 ),
-                typeId = TypeName.toTypeId(TypeName(
-                  namespace = Namespace(Seq("scala")),
-                  name = "Tuple4",
-                  params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
-                )),
+                typeId = TypeName.toTypeId(
+                  TypeName(
+                    namespace = Namespace(Seq("scala")),
+                    name = "Tuple4",
+                    params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
+                  )
+                ),
                 recordBinding = null
               )
             )
@@ -153,11 +155,13 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema[Int].reflect.asTerm("_3"),
                   Schema[Long].reflect.asTerm("_4")
                 ),
-                typeId = TypeName.toTypeId(TypeName(
-                  namespace = Namespace(Seq("scala")),
-                  name = "Tuple4",
-                  params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
-                )),
+                typeId = TypeName.toTypeId(
+                  TypeName(
+                    namespace = Namespace(Seq("scala")),
+                    name = "Tuple4",
+                    params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
+                  )
+                ),
                 recordBinding = null
               )
             )
@@ -190,11 +194,13 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema[Int].reflect.asTerm("_1"),
                   Schema[String].reflect.asTerm("_2")
                 ),
-                typeId = TypeName.toTypeId(TypeName(
-                  namespace = Namespace.scala,
-                  name = "Tuple2",
-                  params = Seq(TypeName.int, TypeName.string)
-                )),
+                typeId = TypeName.toTypeId(
+                  TypeName(
+                    namespace = Namespace.scala,
+                    name = "Tuple2",
+                    params = Seq(TypeName.int, TypeName.string)
+                  )
+                ),
                 recordBinding = null
               )
             )
@@ -215,14 +221,16 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema.derived[(Int, Long)].reflect.asTerm("_1"),
                   Schema.derived[(String, String)].reflect.asTerm("_2")
                 ),
-                typeId = TypeName.toTypeId(TypeName(
-                  namespace = Namespace.scala,
-                  name = "Tuple2",
-                  params = Seq(
-                    TypeName(Namespace.scala, "Tuple2", Seq(TypeName.int, TypeName.long)),
-                    TypeName(Namespace.scala, "Tuple2", Seq(TypeName.string, TypeName.string))
+                typeId = TypeName.toTypeId(
+                  TypeName(
+                    namespace = Namespace.scala,
+                    name = "Tuple2",
+                    params = Seq(
+                      TypeName(Namespace.scala, "Tuple2", Seq(TypeName.int, TypeName.long)),
+                      TypeName(Namespace.scala, "Tuple2", Seq(TypeName.string, TypeName.string))
+                    )
                   )
-                )),
+                ),
                 recordBinding = null
               )
             )
@@ -236,11 +244,13 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema[Option[Int]].reflect.asTerm("_1"),
                   Schema[Option[String]].reflect.asTerm("_2")
                 ),
-                typeId = TypeName.toTypeId(TypeName(
-                  namespace = Namespace.scala,
-                  name = "Tuple2",
-                  params = Seq(TypeName.option(TypeName.int), TypeName.option(TypeName.string))
-                )),
+                typeId = TypeName.toTypeId(
+                  TypeName(
+                    namespace = Namespace.scala,
+                    name = "Tuple2",
+                    params = Seq(TypeName.option(TypeName.int), TypeName.option(TypeName.string))
+                  )
+                ),
                 recordBinding = null
               )
             )

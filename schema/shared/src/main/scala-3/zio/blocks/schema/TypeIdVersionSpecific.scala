@@ -64,53 +64,52 @@ private final class TypeIdVersionSpecificImpl(using Quotes) {
     }
 
     cache.getOrElseUpdate(
-      tpe, {
-        if (tpe =:= TypeRepr.of[java.lang.String]) {
-          new TypeIdRepr(Owner.fromNamespace(Namespace.scala), "String", Nil)
-        } else {
-          val isUnionTpe = isUnion(tpe)
+      tpe,
+      if (tpe =:= TypeRepr.of[java.lang.String]) {
+        new TypeIdRepr(Owner.fromNamespace(Namespace.scala), "String", Nil)
+      } else {
+        val isUnionTpe = isUnion(tpe)
 
-          val (owner, baseName) =
-            if (isUnionTpe) (Owner.root, "|")
-            else ownerAndName(tpe)
+        val (owner, baseName) =
+          if (isUnionTpe) (Owner.root, "|")
+          else ownerAndName(tpe)
 
-          var name = baseName
+        var name = baseName
 
-          val tpeTypeArgs: List[TypeRepr] =
-            if (isUnionTpe) allUnionTypes(tpe)
-            else if (isNamedTuple(tpe)) {
-              val tpeTypeArgs = typeArgs(tpe)
-              val nTpe        = tpeTypeArgs.head
-              val tTpe        = tpeTypeArgs.last
-              val nTypeArgs =
-                if (isGenericTuple(nTpe)) genericTupleTypeArgs(nTpe)
-                else typeArgs(nTpe)
+        val tpeTypeArgs: List[TypeRepr] =
+          if (isUnionTpe) allUnionTypes(tpe)
+          else if (isNamedTuple(tpe)) {
+            val tpeTypeArgs = typeArgs(tpe)
+            val nTpe        = tpeTypeArgs.head
+            val tTpe        = tpeTypeArgs.last
+            val nTypeArgs   =
+              if (isGenericTuple(nTpe)) genericTupleTypeArgs(nTpe)
+              else typeArgs(nTpe)
 
-              var comma  = false
-              val labels = new java.lang.StringBuilder(name)
-              labels.append('[')
-              nTypeArgs.foreach { case ConstantType(StringConstant(str)) =>
-                if (comma) labels.append(',')
-                else comma = true
-                labels.append(str)
-              }
-              labels.append(']')
-              name = labels.toString
+            var comma  = false
+            val labels = new java.lang.StringBuilder(name)
+            labels.append('[')
+            nTypeArgs.foreach { case ConstantType(StringConstant(str)) =>
+              if (comma) labels.append(',')
+              else comma = true
+              labels.append(str)
+            }
+            labels.append(']')
+            name = labels.toString
 
-              if (isGenericTuple(tTpe)) genericTupleTypeArgs(tTpe)
-              else typeArgs(tTpe)
-            } else if (isGenericTuple(tpe)) genericTupleTypeArgs(tpe)
-            else typeArgs(tpe)
+            if (isGenericTuple(tTpe)) genericTupleTypeArgs(tTpe)
+            else typeArgs(tTpe)
+          } else if (isGenericTuple(tpe)) genericTupleTypeArgs(tpe)
+          else typeArgs(tpe)
 
-          val params = tpeTypeArgs.map { arg =>
-            val argId =
-              if (nested.contains(arg)) typeIdRepr(anyTpe, Nil)
-              else typeIdRepr(arg, arg :: nested)
-            new TypeParam(argId)
-          }
-
-          new TypeIdRepr(owner, name, params)
+        val params = tpeTypeArgs.map { arg =>
+          val argId =
+            if (nested.contains(arg)) typeIdRepr(anyTpe, Nil)
+            else typeIdRepr(arg, arg :: nested)
+          new TypeParam(argId)
         }
+
+        new TypeIdRepr(owner, name, params)
       }
     )
   }
@@ -131,4 +130,3 @@ private final class TypeIdVersionSpecificImpl(using Quotes) {
     '{ ${ toExpr(repr) }.asInstanceOf[TypeId.OfType] }
   }
 }
-
