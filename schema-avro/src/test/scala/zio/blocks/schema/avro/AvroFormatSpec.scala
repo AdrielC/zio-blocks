@@ -999,7 +999,7 @@ object AvroFormatSpec extends ZIOSpecDefault {
     implicit val schema: Schema[Email] = new Schema(
       new Reflect.Wrapper[Binding, Email, String](
         Schema[String].reflect,
-        TypeName(Namespace(Seq("zio", "blocks", "avro"), Seq("AvroFormatSpec")), "Email"),
+        TypeName.toTypeId(TypeName(Namespace(Seq("zio", "blocks", "avro"), Seq("AvroFormatSpec")), "Email")),
         None,
         new Binding.Wrapper(
           {
