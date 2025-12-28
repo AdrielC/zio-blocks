@@ -12,7 +12,7 @@ trait Deriver[TC[_]] { self =>
 
   def derivePrimitive[F[_, _], A](
     primitiveType: PrimitiveType[A],
-    typeName: TypeName[A],
+    typeId: TypeId.OfType,
     binding: Binding[BindingType.Primitive, A],
     doc: Doc,
     modifiers: Seq[Modifier.Reflect]
@@ -20,7 +20,7 @@ trait Deriver[TC[_]] { self =>
 
   def deriveRecord[F[_, _], A](
     fields: IndexedSeq[Term[F, A, ?]],
-    typeName: TypeName[A],
+    typeId: TypeId.OfType,
     binding: Binding[BindingType.Record, A],
     doc: Doc,
     modifiers: Seq[Modifier.Reflect]
@@ -28,7 +28,7 @@ trait Deriver[TC[_]] { self =>
 
   def deriveVariant[F[_, _], A](
     cases: IndexedSeq[Term[F, A, ?]],
-    typeName: TypeName[A],
+    typeId: TypeId.OfType,
     binding: Binding[BindingType.Variant, A],
     doc: Doc,
     modifiers: Seq[Modifier.Reflect]
@@ -36,7 +36,7 @@ trait Deriver[TC[_]] { self =>
 
   def deriveSequence[F[_, _], C[_], A](
     element: Reflect[F, A],
-    typeName: TypeName[C[A]],
+    typeId: TypeId.OfType,
     binding: Binding[BindingType.Seq[C], C[A]],
     doc: Doc,
     modifiers: Seq[Modifier.Reflect]
@@ -45,7 +45,7 @@ trait Deriver[TC[_]] { self =>
   def deriveMap[F[_, _], M[_, _], K, V](
     key: Reflect[F, K],
     value: Reflect[F, V],
-    typeName: TypeName[M[K, V]],
+    typeId: TypeId.OfType,
     binding: Binding[BindingType.Map[M], M[K, V]],
     doc: Doc,
     modifiers: Seq[Modifier.Reflect]
@@ -59,7 +59,7 @@ trait Deriver[TC[_]] { self =>
 
   def deriveWrapper[F[_, _], A, B](
     wrapped: Reflect[F, B],
-    typeName: TypeName[A],
+    typeId: TypeId.OfType,
     wrapperPrimitiveType: Option[PrimitiveType[A]],
     binding: Binding[BindingType.Wrapper[A, B], A],
     doc: Doc,

@@ -105,10 +105,12 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema[Int].reflect.asTerm("_3"),
                   Schema[Long].reflect.asTerm("_4")
                 ),
-                typeName = TypeName(
-                  namespace = Namespace(Seq("scala")),
-                  name = "Tuple4",
-                  params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
+                typeId = TypeName.toTypeId(
+                  TypeName(
+                    namespace = Namespace(Seq("scala")),
+                    name = "Tuple4",
+                    params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
+                  )
                 ),
                 recordBinding = null
               )
@@ -153,10 +155,12 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema[Int].reflect.asTerm("_3"),
                   Schema[Long].reflect.asTerm("_4")
                 ),
-                typeName = TypeName(
-                  namespace = Namespace(Seq("scala")),
-                  name = "Tuple4",
-                  params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
+                typeId = TypeName.toTypeId(
+                  TypeName(
+                    namespace = Namespace(Seq("scala")),
+                    name = "Tuple4",
+                    params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
+                  )
                 ),
                 recordBinding = null
               )
@@ -190,10 +194,12 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema[Int].reflect.asTerm("_1"),
                   Schema[String].reflect.asTerm("_2")
                 ),
-                typeName = TypeName(
-                  namespace = Namespace.scala,
-                  name = "Tuple2",
-                  params = Seq(TypeName.int, TypeName.string)
+                typeId = TypeName.toTypeId(
+                  TypeName(
+                    namespace = Namespace.scala,
+                    name = "Tuple2",
+                    params = Seq(TypeName.int, TypeName.string)
+                  )
                 ),
                 recordBinding = null
               )
@@ -215,12 +221,14 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema.derived[(Int, Long)].reflect.asTerm("_1"),
                   Schema.derived[(String, String)].reflect.asTerm("_2")
                 ),
-                typeName = TypeName(
-                  namespace = Namespace.scala,
-                  name = "Tuple2",
-                  params = Seq(
-                    TypeName(Namespace.scala, "Tuple2", Seq(TypeName.int, TypeName.long)),
-                    TypeName(Namespace.scala, "Tuple2", Seq(TypeName.string, TypeName.string))
+                typeId = TypeName.toTypeId(
+                  TypeName(
+                    namespace = Namespace.scala,
+                    name = "Tuple2",
+                    params = Seq(
+                      TypeName(Namespace.scala, "Tuple2", Seq(TypeName.int, TypeName.long)),
+                      TypeName(Namespace.scala, "Tuple2", Seq(TypeName.string, TypeName.string))
+                    )
                   )
                 ),
                 recordBinding = null
@@ -236,10 +244,12 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema[Option[Int]].reflect.asTerm("_1"),
                   Schema[Option[String]].reflect.asTerm("_2")
                 ),
-                typeName = TypeName(
-                  namespace = Namespace.scala,
-                  name = "Tuple2",
-                  params = Seq(TypeName.option(TypeName.int), TypeName.option(TypeName.string))
+                typeId = TypeName.toTypeId(
+                  TypeName(
+                    namespace = Namespace.scala,
+                    name = "Tuple2",
+                    params = Seq(TypeName.option(TypeName.int), TypeName.option(TypeName.string))
+                  )
                 ),
                 recordBinding = null
               )
@@ -251,7 +261,7 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
             new Schema[EmptyTuple](
               reflect = Reflect.Record[Binding, EmptyTuple](
                 fields = Vector(),
-                typeName = TypeName(Namespace(Seq("scala"), Seq("Tuple$package")), "EmptyTuple"),
+                typeId = TypeName.toTypeId(TypeName(Namespace(Seq("scala"), Seq("Tuple$package")), "EmptyTuple")),
                 recordBinding = null
               )
             )
@@ -303,7 +313,7 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                   Schema[Id].reflect.asTerm("id"),
                   Schema.derived[Value].reflect.asTerm("value")
                 ),
-                typeName = TypeName(Namespace.zioBlocksSchema, "Opaque"),
+                typeId = TypeName.toTypeId(TypeName(Namespace.zioBlocksSchema, "Opaque")),
                 recordBinding = null
               )
             )
@@ -352,7 +362,7 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
                     )
                     .asTerm("value")
                 ),
-                typeName = TypeName(Namespace.zioBlocksSchema, "InnerOpaque"),
+                typeId = TypeName.toTypeId(TypeName(Namespace.zioBlocksSchema, "InnerOpaque")),
                 recordBinding = null
               )
             )
@@ -981,7 +991,9 @@ object SchemaVersionSpecificSpec extends ZIOSpecDefault {
     implicit val schema: Schema[InnerId] = Schema(
       Reflect.Wrapper(
         wrapped = Reflect.string[Binding], // Cannot use `Schema[String].reflect` here
-        typeName = TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaVersionSpecificSpec")), "InnerId"),
+        typeId = TypeName.toTypeId(
+          TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaVersionSpecificSpec")), "InnerId")
+        ),
         wrapperPrimitiveType = Some(PrimitiveType.String(Validation.None)),
         wrapperBinding = Binding.Wrapper(s => InnerId(s), identity)
       )
@@ -1027,7 +1039,7 @@ object Id {
   implicit val schema: Schema[Id] = Schema(
     Reflect.Wrapper(
       wrapped = Reflect.string[Binding], // Cannot use `Schema[String].reflect` here
-      typeName = TypeName(Namespace.zioBlocksSchema, "Id"),
+      typeId = TypeName.toTypeId(TypeName(Namespace.zioBlocksSchema, "Id")),
       wrapperPrimitiveType = Some(PrimitiveType.String(Validation.None)),
       wrapperBinding = Binding.Wrapper(s => Id(s), identity)
     )

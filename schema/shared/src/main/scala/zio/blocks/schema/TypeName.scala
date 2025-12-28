@@ -104,4 +104,22 @@ object TypeName {
   private[this] val _arraySeq   = new TypeName(Namespace.scalaCollectionImmutable, "ArraySeq")
   private[this] val _indexedSeq = new TypeName(Namespace.scalaCollectionImmutable, "IndexedSeq")
   private[this] val _seq        = new TypeName(Namespace.scalaCollectionImmutable, "Seq")
+
+  private[schema] def fromTypeId[A](typeId: TypeIdRepr): TypeName[A] = {
+    def loop(id: TypeIdRepr): TypeName[?] =
+      new TypeName(
+        namespace = Owner.toNamespace(id.owner),
+        name = id.name,
+        params = id.params.map(p => loop(p.id))
+      )
+    loop(typeId).asInstanceOf[TypeName[A]]
+  }
+
+  private[schema] def toTypeId(typeName: TypeName[?]): TypeId.OfType = {
+    def loop(tn: TypeName[?]): TypeId.OfType = {
+      val params = tn.params.toList.map(p => new TypeParam(loop(p)))
+      TypeId.unsafeTag[TypeId.KindTag.Type](new TypeIdRepr(Owner.fromNamespace(tn.namespace), tn.name, params))
+    }
+    loop(typeName)
+  }
 }
