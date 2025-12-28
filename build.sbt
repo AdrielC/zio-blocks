@@ -38,6 +38,9 @@ lazy val root = project
     schema.js,
     schema.native,
     `schema-avro`,
+    blobstore.jvm,
+    blobstore.js,
+    blobstore.native,
     streams.jvm,
     streams.js,
     streams.native,
@@ -46,6 +49,22 @@ lazy val root = project
     scalaNextTests.native,
     benchmarks,
     docs
+  )
+
+lazy val blobstore = crossProject(JSPlatform, JVMPlatform, NativePlatform)
+  .crossType(CrossType.Full)
+  .settings(stdSettings("zio-blocks-blobstore"))
+  .settings(crossProjectSettings)
+  .settings(buildInfoSettings("zio.blocks.blobstore"))
+  .enablePlugins(BuildInfoPlugin)
+  .jvmSettings(mimaSettings(failOnProblem = false))
+  .jsSettings(jsSettings)
+  .nativeSettings(nativeSettings)
+  .settings(
+    libraryDependencies ++= Seq(
+      "dev.zio" %%% "zio-test"     % "2.1.23" % Test,
+      "dev.zio" %%% "zio-test-sbt" % "2.1.23" % Test
+    )
   )
 
 lazy val schema = crossProject(JSPlatform, JVMPlatform, NativePlatform)
