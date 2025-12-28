@@ -1,10 +1,12 @@
 package zio.blocks.blobstore
 
+import zio.prelude.ZValidation
+
 import scala.collection.immutable.ArraySeq
 import scala.util.control.NoStackTrace
 
 /**
- * A minimal, dependency-free blob store API.
+ * A minimal blob store API.
  *
  * This API is intentionally synchronous and side-effecting (it does not depend
  * on ZIO/Cats Effect). Downstream users can wrap these operations in their
@@ -57,27 +59,38 @@ final case class BlobKey private (value: String) extends AnyVal {
 }
 
 object BlobKey {
-  def fromString(value: String): Either[BlobStoreError, BlobKey] =
-    if (value eq null) Left(BlobStoreError.InvalidKey("Key must not be null"))
-    else if (value.isEmpty) Left(BlobStoreError.InvalidKey("Key must not be empty"))
-    else if (value.charAt(0) == '/') Left(BlobStoreError.InvalidKey("Key must not start with '/'"))
-    else if (value.indexOf('\u0000') >= 0) Left(BlobStoreError.InvalidKey("Key must not contain NUL"))
-    else Right(new BlobKey(value))
+  type Validated[+A] = ZValidation[Nothing, BlobStoreError, A]
 
-  /**
-   * Constructs a [[BlobKey]] without validation.
-   *
-   * This is intended for internal use by implementations that only ever persist
-   * already-validated keys.
-   */
-  private[blobstore] def unsafeFromValidString(value: String): BlobKey =
-    new BlobKey(value)
+  def apply(value: String): Validated[BlobKey] =
+    fromString(value)
 
-  def unsafeFromString(value: String): BlobKey =
-    fromString(value) match {
-      case Right(k) => k
-      case Left(e)  => throw e
+  def fromString(value: String): Validated[BlobKey] =
+    if (value eq null) ZValidation.fail(BlobStoreError.InvalidKey("Key must not be null"))
+    else {
+      val nonEmpty =
+        ZValidation
+          .fromPredicateWith(BlobStoreError.InvalidKey("Key must not be empty"))(value)((s: String) => s.nonEmpty)
+      val notAbsolute =
+        ZValidation
+          .fromPredicateWith(BlobStoreError.InvalidKey("Key must not start with '/'"))(value)((s: String) =>
+            s.isEmpty || s.charAt(0) != '/'
+          )
+      val noNul =
+        ZValidation
+          .fromPredicateWith(BlobStoreError.InvalidKey("Key must not contain NUL"))(value)((s: String) =>
+            s.indexOf('\u0000') < 0
+          )
+
+      ZValidation.validateWith(nonEmpty, notAbsolute, noNul) { (_, _, _) =>
+        new BlobKey(value)
+      }
     }
+
+  def either(value: String): Either[zio.NonEmptyChunk[BlobStoreError], BlobKey] =
+    fromString(value).toEither
+
+  implicit val ordering: Ordering[BlobKey] =
+    Ordering.by(_.value)
 }
 
 /**
@@ -93,14 +106,34 @@ final case class BlobKeyPrefix private (value: String) extends AnyVal {
 }
 
 object BlobKeyPrefix {
+  type Validated[+A] = ZValidation[Nothing, BlobStoreError, A]
+
   val empty: BlobKeyPrefix = new BlobKeyPrefix("")
 
-  def fromString(value: String): Either[BlobStoreError, BlobKeyPrefix] =
-    if (value eq null) Left(BlobStoreError.InvalidPrefix("Prefix must not be null"))
-    else if (value.nonEmpty && value.charAt(0) == '/')
-      Left(BlobStoreError.InvalidPrefix("Prefix must not start with '/'"))
-    else if (value.indexOf('\u0000') >= 0) Left(BlobStoreError.InvalidPrefix("Prefix must not contain NUL"))
-    else Right(new BlobKeyPrefix(value))
+  def apply(value: String): Validated[BlobKeyPrefix] =
+    fromString(value)
+
+  def fromString(value: String): Validated[BlobKeyPrefix] =
+    if (value eq null) ZValidation.fail(BlobStoreError.InvalidPrefix("Prefix must not be null"))
+    else {
+      val notAbsolute =
+        ZValidation
+          .fromPredicateWith(BlobStoreError.InvalidPrefix("Prefix must not start with '/'"))(value)((s: String) =>
+            s.isEmpty || s.charAt(0) != '/'
+          )
+      val noNul =
+        ZValidation
+          .fromPredicateWith(BlobStoreError.InvalidPrefix("Prefix must not contain NUL"))(value)((s: String) =>
+            s.indexOf('\u0000') < 0
+          )
+
+      ZValidation.validateWith(notAbsolute, noNul) { (_, _) =>
+        new BlobKeyPrefix(value)
+      }
+    }
+
+  def either(value: String): Either[zio.NonEmptyChunk[BlobStoreError], BlobKeyPrefix] =
+    fromString(value).toEither
 }
 
 sealed trait BlobStoreError extends Exception with NoStackTrace {
@@ -117,33 +150,33 @@ object BlobStoreError {
 }
 
 final class InMemoryBlobStore() extends BlobStore {
-  private[this] val lock: AnyRef                    = new AnyRef
-  private[this] var state: Map[String, Array[Byte]] = Map.empty
+  private[this] val lock: AnyRef                     = new AnyRef
+  private[this] var state: Map[BlobKey, Array[Byte]] = Map.empty
 
   override def put(key: BlobKey, bytes: Array[Byte]): Either[BlobStoreError, BlobMetadata] =
     if (bytes eq null) Left(BlobStoreError.Unexpected("Bytes must not be null"))
     else {
       val copy = bytes.clone()
       lock.synchronized {
-        state = state.updated(key.value, copy)
+        state = state.updated(key, copy)
       }
       Right(BlobMetadata(key, copy.length.toLong))
     }
 
   override def get(key: BlobKey): Either[BlobStoreError, Option[Array[Byte]]] =
     lock.synchronized {
-      Right(state.get(key.value).map(_.clone()))
+      Right(state.get(key).map(_.clone()))
     }
 
   override def head(key: BlobKey): Either[BlobStoreError, Option[BlobMetadata]] =
     lock.synchronized {
-      Right(state.get(key.value).map(bytes => BlobMetadata(key, bytes.length.toLong)))
+      Right(state.get(key).map(bytes => BlobMetadata(key, bytes.length.toLong)))
     }
 
   override def delete(key: BlobKey): Either[BlobStoreError, Boolean] =
     lock.synchronized {
-      val existed = state.contains(key.value)
-      if (existed) state = state - key.value
+      val existed = state.contains(key)
+      if (existed) state = state - key
       Right(existed)
     }
 
@@ -151,13 +184,10 @@ final class InMemoryBlobStore() extends BlobStore {
     lock.synchronized {
       val keys =
         if (prefix.value.isEmpty) state.keysIterator
-        else state.keysIterator.filter(_.startsWith(prefix.value))
+        else state.keysIterator.filter(_.value.startsWith(prefix.value))
 
       Right(
-        keys.toArray.sorted.iterator
-          .map(BlobKey.unsafeFromValidString)
-          .to(ArraySeq)
-          .toVector
+        keys.toArray.sorted.to(ArraySeq).toVector
       )
     }
 }

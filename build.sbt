@@ -62,6 +62,7 @@ lazy val blobstore = crossProject(JSPlatform, JVMPlatform, NativePlatform)
   .nativeSettings(nativeSettings)
   .settings(
     libraryDependencies ++= Seq(
+      "dev.zio" %%% "zio-prelude"  % "1.0.0-RC44",
       "dev.zio" %%% "zio-test"     % "2.1.23" % Test,
       "dev.zio" %%% "zio-test-sbt" % "2.1.23" % Test
     )
