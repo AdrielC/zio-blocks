@@ -133,7 +133,7 @@ lazy val `schema-avro` = project
 
 lazy val scalaNextTests = crossProject(JSPlatform, JVMPlatform, NativePlatform)
   .crossType(CrossType.Pure)
-  .settings(stdSettings("zio-blocks-scala-next-tests", Seq("3.7.4")))
+  .settings(stdSettings("zio-blocks-scala-next-tests", Seq("3.8.1")))
   .dependsOn(schema)
   .settings(crossProjectSettings)
   .settings(
