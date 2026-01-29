@@ -284,10 +284,10 @@ private class SchemaVersionSpecificImpl(using Quotes) {
   private def toExpr[T: Type](tpeName: TypeName[T])(using Quotes): Expr[TypeName[T]] = {
     val packages = Varargs(tpeName.namespace.packages.map(Expr(_)))
     val vs       = tpeName.namespace.values
-    val values   = if (vs.isEmpty) '{ Nil } else Varargs(vs.map(Expr(_)))
+    val values   = if (vs.isEmpty) 'Nil else Varargs(vs.map(Expr(_)))
     val name     = Expr(tpeName.name)
     val ps       = tpeName.params
-    val params   = if (ps.isEmpty) '{ Nil } else Varargs(ps.map(param => toExpr(param.asInstanceOf[TypeName[T]])))
+    val params   = if (ps.isEmpty) 'Nil else Varargs(ps.map(param => toExpr(param.asInstanceOf[TypeName[T]])))
     '{ new TypeName[T](new Namespace($packages, $values), $name, $params) }
   }
 
@@ -308,7 +308,7 @@ private class SchemaVersionSpecificImpl(using Quotes) {
         modifiers = annotation.asExpr.asInstanceOf[Expr[Modifier.Reflect]] :: modifiers
       }
     }
-    if (modifiers eq Nil) '{ Nil } else Varargs(modifiers)
+    if (modifiers eq Nil) 'Nil else Varargs(modifiers)
   }
 
   private def summonClassTag[T: Type](using Quotes): Expr[ClassTag[T]] =
