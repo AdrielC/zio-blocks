@@ -307,6 +307,78 @@ object Scan {
   )(use: R => Scan.Aux[In, Out, S]): Scan.Aux[In, Out, (R, S)] =
     new Scoped[In, Out, S, R](() => acquire, release, use)
 
+  // ---------------------------------------------------------------------------
+  //  Time / windowing
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Tag every input with a nanosecond timestamp from `clock` (default
+   * `System.nanoTime`). State is `Unit`. Used as the input adapter for
+   * [[tumblingTime]].
+   */
+  def timestamped[A](clock: () => Long = () => System.nanoTime()): Scan.Aux[A, Timestamped[A], Unit] =
+    new TimestampedScan[A](clock)
+
+  /**
+   * Group elements into count-based tumbling windows of size `size`. Each
+   * window is emitted as a `Chunk[A]`; the final, possibly-shorter window
+   * is emitted at end-of-stream. State is the number of windows emitted.
+   */
+  def tumbling[A](size: Int): Scan.Aux[A, Chunk[A], Long] = new TumblingScan[A](size)
+
+  /**
+   * Group `Timestamped[A]` elements by event-time tumbling windows of
+   * `durationNanos`. The first window starts at the timestamp of the first
+   * element; subsequent windows are computed from there. State is the
+   * number of windows emitted (the final partial window is emitted on
+   * close).
+   */
+  def tumblingTime[A](durationNanos: Long): Scan.Aux[Timestamped[A], Chunk[Timestamped[A]], Long] =
+    new TumblingTimeScan[A](durationNanos)
+
+  /**
+   * Sliding count-based windows of size `size` advancing by `step`. State
+   * is the number of windows emitted.
+   */
+  def sliding[A](size: Int, step: Int = 1): Scan.Aux[A, Chunk[A], Long] = new SlidingScan[A](size, step)
+
+  // ---------------------------------------------------------------------------
+  //  Stats
+  // ---------------------------------------------------------------------------
+
+  /** Emit `(prev, curr)` from the second input onward. Stateless. */
+  def pairwise[A]: Scan.Aux[A, (A, A), Unit] = new PairwiseScan[A]
+
+  /** Emit `curr - prev` from the second input onward. */
+  def diff[A](implicit num: Numeric[A]): Scan.Aux[A, A, Unit] =
+    pairwise[A].map { case (p, c) => num.minus(c, p) }
+
+  /**
+   * Exponentially-weighted moving average: `e_t = alpha * x_t + (1 - alpha) * e_{t-1}`,
+   * seeded by the first observation. State is the current EWMA value.
+   * Forgetful — old values weighted less than recent ones.
+   */
+  def ewma(alpha: Double): Scan.Aux[Double, Double, Double] = new EwmaScan(alpha)
+
+  /**
+   * Online sample statistics over a stream of `Double`s. Emits the running
+   * `SampleStats` per observation; the final state is the same.
+   *
+   * Uses Welford's algorithm for `observe` and the Chan parallel algorithm
+   * for `merge` — together a numerically stable Monoid.
+   */
+  def sampleStats: Scan.Aux[Double, SampleStats, SampleStats] = new SampleStatsRunning(SampleStats.empty)
+
+  /**
+   * Like [[sampleStats]] but consumes silently and surfaces only the final
+   * stats via `toSink` / `state`.
+   */
+  def sampleStatsTerminal: Scan.Aux[Double, Nothing, SampleStats] = new SampleStatsTerminal(SampleStats.empty)
+
+  /** Resume a running [[sampleStats]] from a saved value. */
+  def sampleStatsFromInitial(initial: SampleStats): Scan.Aux[Double, SampleStats, SampleStats] =
+    new SampleStatsRunning(initial)
+
   /** Run a scan in-memory. Used by [[Scan.runChunk]] and tests. */
   private[scan] def runChunkImpl[In, Out, S](scan: Scan.Aux[In, Out, S], in: Chunk[In]): (S, Chunk[Out]) = {
     val src    = Reader.fromChunk(in)(using JvmType.Infer.anyRef[In]).asInstanceOf[Reader[In]]
@@ -796,6 +868,363 @@ object Scan {
         }
       }
     }
+  }
+
+  // ===========================================================================
+  //  Time / window leaf classes
+  // ===========================================================================
+
+  private[scan] final class TimestampedScan[A](clock: () => Long) extends Scan[A, Timestamped[A]] {
+    type State = Unit
+    def initialState: Unit                                          = ()
+    def withInitialState(s: Unit): Scan.Aux[A, Timestamped[A], Unit] = this
+    def render: String                                              = "Scan.timestamped(...)"
+    private[scan] def applyToReader(source: Reader[A]): ScanReader[Timestamped[A]] { type State = Unit } =
+      new ScanReader[Timestamped[A]] {
+        type State                                     = Unit
+        def state: Unit                                = ()
+        def isClosed: Boolean                          = source.isClosed
+        def read[A1 >: Timestamped[A]](sentinel: A1): A1 = {
+          val v = source.read[Any](EndOfStream)
+          if (v.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+          else Timestamped(clock(), v.asInstanceOf[A]).asInstanceOf[A1]
+        }
+        def close(): Unit = source.close()
+      }
+  }
+
+  /**
+   * Count-based tumbling windows. Buffers up to `size` elements then emits
+   * a `Chunk[A]`. Final, possibly-shorter window emitted at end-of-stream.
+   */
+  private[scan] final class TumblingScan[A] private (size: Int, initialEmittedWindows: Long) extends Scan[A, Chunk[A]] {
+    def this(size: Int) = this(size, 0L)
+    require(size > 0, s"TumblingScan size must be > 0, got $size")
+    type State = Long
+    def initialState: Long                                       = initialEmittedWindows
+    def withInitialState(s: Long): Scan.Aux[A, Chunk[A], Long]   = new TumblingScan[A](size, s)
+    def render: String                                           = s"Scan.tumbling($size)"
+    private[scan] def applyToReader(source: Reader[A]): ScanReader[Chunk[A]] { type State = Long } =
+      new ScanReader[Chunk[A]] {
+        type State                                = Long
+        private var buf: ChunkBuilder[A]          = ChunkBuilder.make[A](size)
+        private var bufLen: Int                   = 0
+        private var emittedSinceStart: Long       = 0L
+        private var sourceDone: Boolean           = false
+        private var done: Boolean                 = false
+        def state: Long                           = initialEmittedWindows + emittedSinceStart
+        def isClosed: Boolean                     = done
+        def read[A1 >: Chunk[A]](sentinel: A1): A1 = {
+          if (done) return sentinel
+          if (!sourceDone) {
+            while (bufLen < size) {
+              val v = source.read[Any](EndOfStream)
+              if (v.asInstanceOf[AnyRef] eq EndOfStream) {
+                sourceDone = true
+                if (bufLen == 0) { done = true; return sentinel }
+                val chunk = buf.result()
+                buf       = ChunkBuilder.make[A](size)
+                bufLen    = 0
+                emittedSinceStart += 1L
+                done      = true // no more elements after this final partial window
+                return chunk.asInstanceOf[A1]
+              }
+              buf += v.asInstanceOf[A]
+              bufLen += 1
+            }
+            val chunk = buf.result()
+            buf       = ChunkBuilder.make[A](size)
+            bufLen    = 0
+            emittedSinceStart += 1L
+            chunk.asInstanceOf[A1]
+          } else {
+            done = true
+            sentinel
+          }
+        }
+        def close(): Unit = { done = true; source.close() }
+      }
+  }
+
+  /**
+   * Event-time tumbling windows over `Timestamped[A]`. The first window
+   * starts at the timestamp of the first element observed.
+   */
+  private[scan] final class TumblingTimeScan[A] private (
+      durationNanos: Long,
+      initialEmittedWindows: Long
+  ) extends Scan[Timestamped[A], Chunk[Timestamped[A]]] {
+    def this(durationNanos: Long) = this(durationNanos, 0L)
+    require(durationNanos > 0L, s"TumblingTimeScan durationNanos must be > 0, got $durationNanos")
+    type State = Long
+    def initialState: Long                                                                 = initialEmittedWindows
+    def withInitialState(s: Long): Scan.Aux[Timestamped[A], Chunk[Timestamped[A]], Long]   =
+      new TumblingTimeScan[A](durationNanos, s)
+    def render: String                                                                     = s"Scan.tumblingTime($durationNanos)"
+    private[scan] def applyToReader(
+        source: Reader[Timestamped[A]]
+    ): ScanReader[Chunk[Timestamped[A]]] { type State = Long } =
+      new ScanReader[Chunk[Timestamped[A]]] {
+        type State                                                         = Long
+        private var buf: ChunkBuilder[Timestamped[A]]                      = ChunkBuilder.make(16)
+        private var bufLen: Int                                            = 0
+        private var emittedSinceStart: Long                                = 0L
+        private var windowStart: Long                                      = 0L
+        private var initialised: Boolean                                   = false
+        private var pending: Timestamped[A]                                = null
+        private var sourceDone: Boolean                                    = false
+        private var done: Boolean                                          = false
+        def state: Long                                                    = initialEmittedWindows + emittedSinceStart
+        def isClosed: Boolean                                              = done
+        private def emitBuf(): Chunk[Timestamped[A]] = {
+          val chunk = buf.result()
+          buf       = ChunkBuilder.make(16)
+          bufLen    = 0
+          emittedSinceStart += 1L
+          chunk
+        }
+        def read[A1 >: Chunk[Timestamped[A]]](sentinel: A1): A1 = {
+          if (done) return sentinel
+          while (true) {
+            // re-process any pending element first (it crossed a window boundary
+            // and was held back from the previous read)
+            val candidate: Timestamped[A] =
+              if (pending != null) {
+                val p = pending; pending = null; p
+              } else if (sourceDone) {
+                if (bufLen > 0) return emitBuf().asInstanceOf[A1]
+                done = true
+                return sentinel
+              } else {
+                val v = source.read[Any](EndOfStream)
+                if (v.asInstanceOf[AnyRef] eq EndOfStream) {
+                  sourceDone = true
+                  if (bufLen > 0) return emitBuf().asInstanceOf[A1]
+                  done = true
+                  return sentinel
+                }
+                v.asInstanceOf[Timestamped[A]]
+              }
+            if (!initialised) {
+              windowStart = candidate.nanos
+              initialised = true
+            }
+            if (candidate.nanos < windowStart + durationNanos) {
+              buf += candidate
+              bufLen += 1
+            } else {
+              // boundary — emit current buffer, advance window start, hold this element
+              pending = candidate
+              // skip empty windows so we don't emit a glut of empty chunks
+              while (candidate.nanos >= windowStart + durationNanos) windowStart += durationNanos
+              if (bufLen > 0) return emitBuf().asInstanceOf[A1]
+              // empty buffer — fall through to process pending in next iteration
+            }
+          }
+          sentinel
+        }
+        def close(): Unit = { done = true; source.close() }
+      }
+  }
+
+  /** Count-based sliding windows of size `size` advancing by `step`. */
+  private[scan] final class SlidingScan[A] private (size: Int, step: Int, initialEmittedWindows: Long)
+      extends Scan[A, Chunk[A]] {
+    def this(size: Int, step: Int) = this(size, step, 0L)
+    require(size > 0, s"SlidingScan size must be > 0, got $size")
+    require(step > 0, s"SlidingScan step must be > 0, got $step")
+    type State = Long
+    def initialState: Long                                     = initialEmittedWindows
+    def withInitialState(s: Long): Scan.Aux[A, Chunk[A], Long] = new SlidingScan[A](size, step, s)
+    def render: String                                         = s"Scan.sliding($size, $step)"
+    private[scan] def applyToReader(source: Reader[A]): ScanReader[Chunk[A]] { type State = Long } =
+      new ScanReader[Chunk[A]] {
+        type State                                = Long
+        private val ring                          = scala.collection.mutable.ArrayBuffer.empty[A]
+        private var emittedSinceStart: Long       = 0L
+        private var firstEmitted: Boolean         = false
+        private var sourceDone: Boolean           = false
+        private var done: Boolean                 = false
+        def state: Long                           = initialEmittedWindows + emittedSinceStart
+        def isClosed: Boolean                     = done
+        private def buildChunk(): Chunk[A] = {
+          val arr  = new scala.Array[Any](ring.length)
+          var i    = 0
+          while (i < ring.length) { arr(i) = ring(i); i += 1 }
+          // Use the AnyRef chunk builder to avoid primitive specialisation
+          // concerns for now — Phase 1B-or-later may add per-lane fast paths.
+          val cb = ChunkBuilder.make[A](ring.length)
+          var j  = 0
+          while (j < ring.length) { cb += arr(j).asInstanceOf[A]; j += 1 }
+          cb.result()
+        }
+        private def fill(target: Int): Boolean = {
+          while (ring.length < target) {
+            val v = source.read[Any](EndOfStream)
+            if (v.asInstanceOf[AnyRef] eq EndOfStream) { sourceDone = true; return false }
+            ring.append(v.asInstanceOf[A])
+          }
+          true
+        }
+        def read[A1 >: Chunk[A]](sentinel: A1): A1 = {
+          if (done) return sentinel
+          if (!firstEmitted) {
+            if (!fill(size)) {
+              if (ring.isEmpty) { done = true; return sentinel }
+              firstEmitted = true
+              val chunk    = buildChunk()
+              ring.clear()
+              emittedSinceStart += 1L
+              done = true
+              return chunk.asInstanceOf[A1]
+            }
+            firstEmitted = true
+            val chunk = buildChunk()
+            emittedSinceStart += 1L
+            return chunk.asInstanceOf[A1]
+          }
+          // advance by step elements, then emit if we still have a full window
+          var i = 0
+          while (i < step) {
+            if (ring.nonEmpty) ring.remove(0)
+            i += 1
+          }
+          if (sourceDone && ring.isEmpty) { done = true; return sentinel }
+          if (!fill(size)) {
+            if (ring.isEmpty) { done = true; return sentinel }
+            val chunk = buildChunk()
+            ring.clear()
+            emittedSinceStart += 1L
+            done = true
+            return chunk.asInstanceOf[A1]
+          }
+          val chunk = buildChunk()
+          emittedSinceStart += 1L
+          chunk.asInstanceOf[A1]
+        }
+        def close(): Unit = { done = true; source.close() }
+      }
+  }
+
+  // ===========================================================================
+  //  Stat leaf classes
+  // ===========================================================================
+
+  private[scan] final class PairwiseScan[A] extends Scan[A, (A, A)] {
+    type State = Unit
+    def initialState: Unit                                     = ()
+    def withInitialState(s: Unit): Scan.Aux[A, (A, A), Unit]   = this
+    def render: String                                         = "Scan.pairwise"
+    private[scan] def applyToReader(source: Reader[A]): ScanReader[(A, A)] { type State = Unit } =
+      new ScanReader[(A, A)] {
+        type State                          = Unit
+        private var prev: A                 = null.asInstanceOf[A]
+        private var hasPrev: Boolean        = false
+        def state: Unit                     = ()
+        def isClosed: Boolean               = source.isClosed
+        def read[A1 >: (A, A)](sentinel: A1): A1 = {
+          while (true) {
+            val v = source.read[Any](EndOfStream)
+            if (v.asInstanceOf[AnyRef] eq EndOfStream) return sentinel
+            val a = v.asInstanceOf[A]
+            if (!hasPrev) {
+              prev    = a
+              hasPrev = true
+            } else {
+              val pair = (prev, a)
+              prev = a
+              return pair.asInstanceOf[A1]
+            }
+          }
+          sentinel
+        }
+        def close(): Unit = source.close()
+      }
+  }
+
+  /** Exponentially-weighted moving average. */
+  private[scan] final class EwmaScan(alpha: Double, initial: Double, hasFirstInitial: Boolean)
+      extends Scan[Double, Double] {
+    def this(alpha: Double) = this(alpha, 0.0, false)
+    require(alpha > 0.0 && alpha <= 1.0, s"ewma alpha must be in (0, 1], got $alpha")
+    type State = Double
+    def initialState: Double                                = initial
+    def withInitialState(s: Double): Scan.Aux[Double, Double, Double] =
+      new EwmaScan(alpha, s, true)
+    def render: String                                      = s"Scan.ewma($alpha)"
+    private[scan] def applyToReader(source: Reader[Double]): ScanReader[Double] { type State = Double } =
+      new ScanReader[Double] {
+        type State                              = Double
+        private var ewma: Double                = initial
+        private var hasFirst: Boolean           = hasFirstInitial
+        def state: Double                       = ewma
+        def isClosed: Boolean                   = source.isClosed
+        def read[A1 >: Double](sentinel: A1): A1 = {
+          val v = source.read[Any](EndOfStream)
+          if (v.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+          else {
+            val x = v.asInstanceOf[Double]
+            if (!hasFirst) {
+              ewma     = x
+              hasFirst = true
+            } else {
+              ewma = alpha * x + (1.0 - alpha) * ewma
+            }
+            ewma.asInstanceOf[A1]
+          }
+        }
+        def close(): Unit = source.close()
+      }
+  }
+
+  /** Running [[SampleStats]] — emits per observation. */
+  private[scan] final class SampleStatsRunning(initial: SampleStats) extends Scan[Double, SampleStats] {
+    type State = SampleStats
+    def initialState: SampleStats                                                = initial
+    def withInitialState(s: SampleStats): Scan.Aux[Double, SampleStats, SampleStats] =
+      new SampleStatsRunning(s)
+    def render: String                                                           = "Scan.sampleStats"
+    private[scan] def applyToReader(source: Reader[Double]): ScanReader[SampleStats] { type State = SampleStats } =
+      new ScanReader[SampleStats] {
+        type State                                  = SampleStats
+        private var stats: SampleStats              = initial
+        def state: SampleStats                      = stats
+        def isClosed: Boolean                       = source.isClosed
+        def read[A1 >: SampleStats](sentinel: A1): A1 = {
+          val v = source.read[Any](EndOfStream)
+          if (v.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+          else {
+            stats = stats.observe(v.asInstanceOf[Double])
+            stats.asInstanceOf[A1]
+          }
+        }
+        def close(): Unit = source.close()
+      }
+  }
+
+  /** Terminal [[SampleStats]] — consumes silently, surfaces only the final value. */
+  private[scan] final class SampleStatsTerminal(initial: SampleStats) extends Scan[Double, Nothing] {
+    type State = SampleStats
+    def initialState: SampleStats                                              = initial
+    def withInitialState(s: SampleStats): Scan.Aux[Double, Nothing, SampleStats] =
+      new SampleStatsTerminal(s)
+    def render: String                                                         = "Scan.sampleStatsTerminal"
+    private[scan] def applyToReader(source: Reader[Double]): ScanReader[Nothing] { type State = SampleStats } =
+      new ScanReader[Nothing] {
+        type State                              = SampleStats
+        private var stats: SampleStats          = initial
+        def state: SampleStats                  = stats
+        def isClosed: Boolean                   = source.isClosed
+        def read[A1 >: Nothing](sentinel: A1): A1 = {
+          var v = source.read[Any](EndOfStream)
+          while (v.asInstanceOf[AnyRef] ne EndOfStream) {
+            stats = stats.observe(v.asInstanceOf[Double])
+            v     = source.read[Any](EndOfStream)
+          }
+          sentinel
+        }
+        def close(): Unit = source.close()
+      }
   }
 
   // ===========================================================================
