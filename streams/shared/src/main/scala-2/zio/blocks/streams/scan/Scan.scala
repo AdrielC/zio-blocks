@@ -18,7 +18,6 @@ package zio.blocks.streams.scan
 
 import scala.annotation.unchecked.uncheckedVariance
 import zio.blocks.chunk.{Chunk, ChunkBuilder}
-import zio.blocks.combinators.Tuples.Tuples
 import zio.blocks.streams.{JvmType, Pipeline, Sink, Stream}
 import zio.blocks.streams.internal.EndOfStream
 import zio.blocks.streams.io.Reader
@@ -78,12 +77,12 @@ abstract class Scan[-In, +Out] { self =>
 
   final def >>>[Out2, S2](
     that: Scan.Aux[Out, Out2, S2]
-  )(implicit t: Tuples[State, S2]): Scan.Aux[In, Out2, t.Out] =
+  )(implicit t: Combine[State, S2]): Scan.Aux[In, Out2, t.Out] =
     new Scan.AndThen[In, Out, Out2, State, S2, t.Out](self, that, t)
 
   final def andThen[Out2, S2](
     that: Scan.Aux[Out, Out2, S2]
-  )(implicit t: Tuples[State, S2]): Scan.Aux[In, Out2, t.Out] = self >>> that
+  )(implicit t: Combine[State, S2]): Scan.Aux[In, Out2, t.Out] = self >>> that
 
   // ---------------------------------------------------------------------------
   //  Fanout: same input, paired output
@@ -91,7 +90,7 @@ abstract class Scan[-In, +Out] { self =>
 
   final def &&&[Out2, S2](
     that: Scan.Aux[In @uncheckedVariance, Out2, S2]
-  )(implicit t: Tuples[State, S2]): Scan.Aux[In, (Out, Out2), t.Out] =
+  )(implicit t: Combine[State, S2]): Scan.Aux[In, (Out, Out2), t.Out] =
     new Scan.Both[In, Out, Out2, State, S2, t.Out](self, that, t)
 
   // ---------------------------------------------------------------------------
@@ -382,7 +381,7 @@ object Scan {
   private[scan] final class AndThen[In, Mid, Out, SA, SB, S0](
     val first: Scan.Aux[In, Mid, SA],
     val second: Scan.Aux[Mid, Out, SB],
-    val t: Tuples[SA, SB] { type Out = S0 }
+    val t: Combine.Aux[SA, SB, S0]
   ) extends Scan[In, Out] {
     type State = S0
     def initialState: S0 = t.combine(first.initialState, second.initialState)
@@ -412,7 +411,7 @@ object Scan {
   private[scan] final class Both[In, OA, OB, SA, SB, S0](
     val left: Scan.Aux[In, OA, SA],
     val right: Scan.Aux[In, OB, SB],
-    val t: Tuples[SA, SB] { type Out = S0 }
+    val t: Combine.Aux[SA, SB, S0]
   ) extends Scan[In, (OA, OB)] {
     type State = S0
     def initialState: S0 = t.combine(left.initialState, right.initialState)
