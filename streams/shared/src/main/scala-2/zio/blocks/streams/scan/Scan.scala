@@ -157,6 +157,29 @@ object Scan {
   def fold[I, S](z: S)(f: (S, I) => S): Scan.Aux[I, Nothing, S] = new FoldLeftScan[I, S](z, f)
   def runningFold[I, S](z: S)(f: (S, I) => S): Scan.Aux[I, S, S] = new RunningFoldScan[I, S](z, f)
 
+  // ---------------------------------------------------------------------------
+  //  Short-circuit
+  // ---------------------------------------------------------------------------
+
+  def take[A](n: Long): Scan.Aux[A, A, Long] = new TakeN[A](n)
+  def takeWhile[A](pred: A => Boolean): Scan.Aux[A, A, Long] = new TakeWhileScan[A](pred)
+  def haltWhen[A](pred: A => Boolean): Scan.Aux[A, A, Long] = new HaltWhenScan[A](pred)
+  def drop[A](n: Long): Scan.Aux[A, A, Long] = new DropN[A](n)
+  def dropWhile[A](pred: A => Boolean): Scan.Aux[A, A, Long] = new DropWhileScan[A](pred)
+
+  // ---------------------------------------------------------------------------
+  //  Scope-aware completion
+  // ---------------------------------------------------------------------------
+
+  def ensuring[In, Out, S](inner: Scan.Aux[In, Out, S])(finalizer: => Unit): Scan.Aux[In, Out, S] =
+    new Ensuring[In, Out, S](inner, () => finalizer)
+
+  def acquireRelease[In, Out, S, R](
+    acquire: => R,
+    release: R => Unit
+  )(use: R => Scan.Aux[In, Out, S]): Scan.Aux[In, Out, (R, S)] =
+    new Scoped[In, Out, S, R](() => acquire, release, use)
+
   private[scan] def runChunkImpl[In, Out, S](scan: Scan.Aux[In, Out, S], in: Chunk[In]): (S, Chunk[Out]) = {
     val src     = Reader.fromChunk(in)(JvmType.Infer.anyRef[In]).asInstanceOf[Reader[In]]
     val out     = scan.applyToReader(src)
@@ -372,6 +395,241 @@ object Scan {
         }
         def close(): Unit = source.close()
       }
+  }
+
+  // ===========================================================================
+  //  Short-circuit leaf classes — flag-based, no exceptions.
+  // ===========================================================================
+
+  private[scan] final class TakeN[A] private (limit: Long, initialEmitted: Long) extends Scan[A, A] {
+    def this(limit: Long) = this(limit, 0L)
+    type State = Long
+    def initialState: Long                              = initialEmitted
+    def withInitialState(s: Long): Scan.Aux[A, A, Long] = new TakeN[A](limit, s)
+    def render: String                                  = "Scan.take(" + limit + ")"
+    private[scan] def applyToReader(source: Reader[A]): ScanReader[A] { type State = Long } =
+      new ScanReader[A] {
+        type State                          = Long
+        private var emitted: Long           = 0L
+        private var doneSent: Boolean       = false
+        def state: Long                     = initialEmitted + emitted
+        def isClosed: Boolean               = doneSent || source.isClosed
+        override def jvmType: JvmType       = source.jvmType
+        def read[A1 >: A](sentinel: A1): A1 =
+          if (doneSent) sentinel
+          else if (emitted >= limit) {
+            doneSent = true
+            source.close()
+            sentinel
+          } else {
+            val v = source.read[Any](EndOfStream)
+            if (v.asInstanceOf[AnyRef] eq EndOfStream) { doneSent = true; sentinel }
+            else { emitted += 1L; v.asInstanceOf[A1] }
+          }
+        def close(): Unit = { doneSent = true; source.close() }
+      }
+  }
+
+  private[scan] final class TakeWhileScan[A] private (pred: A => Boolean, initialEmitted: Long) extends Scan[A, A] {
+    def this(pred: A => Boolean) = this(pred, 0L)
+    type State = Long
+    def initialState: Long                              = initialEmitted
+    def withInitialState(s: Long): Scan.Aux[A, A, Long] = new TakeWhileScan[A](pred, s)
+    def render: String                                  = "Scan.takeWhile(...)"
+    private[scan] def applyToReader(source: Reader[A]): ScanReader[A] { type State = Long } =
+      new ScanReader[A] {
+        type State                          = Long
+        private var emitted: Long           = 0L
+        private var doneSent: Boolean       = false
+        def state: Long                     = initialEmitted + emitted
+        def isClosed: Boolean               = doneSent || source.isClosed
+        override def jvmType: JvmType       = source.jvmType
+        def read[A1 >: A](sentinel: A1): A1 = {
+          if (doneSent) return sentinel
+          val v = source.read[Any](EndOfStream)
+          if (v.asInstanceOf[AnyRef] eq EndOfStream) { doneSent = true; sentinel }
+          else {
+            val a = v.asInstanceOf[A]
+            if (pred(a)) { emitted += 1L; a.asInstanceOf[A1] }
+            else { doneSent = true; source.close(); sentinel }
+          }
+        }
+        def close(): Unit = { doneSent = true; source.close() }
+      }
+  }
+
+  private[scan] final class HaltWhenScan[A] private (pred: A => Boolean, initialEmitted: Long) extends Scan[A, A] {
+    def this(pred: A => Boolean) = this(pred, 0L)
+    type State = Long
+    def initialState: Long                              = initialEmitted
+    def withInitialState(s: Long): Scan.Aux[A, A, Long] = new HaltWhenScan[A](pred, s)
+    def render: String                                  = "Scan.haltWhen(...)"
+    private[scan] def applyToReader(source: Reader[A]): ScanReader[A] { type State = Long } =
+      new ScanReader[A] {
+        type State                          = Long
+        private var emitted: Long           = 0L
+        private var doneSent: Boolean       = false
+        def state: Long                     = initialEmitted + emitted
+        def isClosed: Boolean               = doneSent || source.isClosed
+        override def jvmType: JvmType       = source.jvmType
+        def read[A1 >: A](sentinel: A1): A1 = {
+          if (doneSent) return sentinel
+          val v = source.read[Any](EndOfStream)
+          if (v.asInstanceOf[AnyRef] eq EndOfStream) { doneSent = true; sentinel }
+          else {
+            val a = v.asInstanceOf[A]
+            if (pred(a)) { doneSent = true; source.close(); sentinel }
+            else { emitted += 1L; a.asInstanceOf[A1] }
+          }
+        }
+        def close(): Unit = { doneSent = true; source.close() }
+      }
+  }
+
+  private[scan] final class DropN[A] private (n: Long, initialDropped: Long) extends Scan[A, A] {
+    def this(n: Long) = this(n, 0L)
+    type State = Long
+    def initialState: Long                              = initialDropped
+    def withInitialState(s: Long): Scan.Aux[A, A, Long] = new DropN[A](n, s)
+    def render: String                                  = "Scan.drop(" + n + ")"
+    private[scan] def applyToReader(source: Reader[A]): ScanReader[A] { type State = Long } =
+      new ScanReader[A] {
+        type State                          = Long
+        private var dropped: Long           = 0L
+        def state: Long                     = initialDropped + dropped
+        def isClosed: Boolean               = source.isClosed
+        override def jvmType: JvmType       = source.jvmType
+        def read[A1 >: A](sentinel: A1): A1 = {
+          while (dropped < n) {
+            val v = source.read[Any](EndOfStream)
+            if (v.asInstanceOf[AnyRef] eq EndOfStream) return sentinel
+            dropped += 1L
+          }
+          val v = source.read[Any](EndOfStream)
+          if (v.asInstanceOf[AnyRef] eq EndOfStream) sentinel else v.asInstanceOf[A1]
+        }
+        def close(): Unit = source.close()
+      }
+  }
+
+  private[scan] final class DropWhileScan[A] private (pred: A => Boolean, initialDropped: Long) extends Scan[A, A] {
+    def this(pred: A => Boolean) = this(pred, 0L)
+    type State = Long
+    def initialState: Long                              = initialDropped
+    def withInitialState(s: Long): Scan.Aux[A, A, Long] = new DropWhileScan[A](pred, s)
+    def render: String                                  = "Scan.dropWhile(...)"
+    private[scan] def applyToReader(source: Reader[A]): ScanReader[A] { type State = Long } =
+      new ScanReader[A] {
+        type State                          = Long
+        private var dropped: Long           = 0L
+        private var dropping: Boolean       = true
+        def state: Long                     = initialDropped + dropped
+        def isClosed: Boolean               = source.isClosed
+        override def jvmType: JvmType       = source.jvmType
+        def read[A1 >: A](sentinel: A1): A1 = {
+          while (true) {
+            val v = source.read[Any](EndOfStream)
+            if (v.asInstanceOf[AnyRef] eq EndOfStream) return sentinel
+            val a = v.asInstanceOf[A]
+            if (dropping) {
+              if (pred(a)) { dropped += 1L }
+              else { dropping = false; return a.asInstanceOf[A1] }
+            } else return a.asInstanceOf[A1]
+          }
+          sentinel
+        }
+        def close(): Unit = source.close()
+      }
+  }
+
+  // ===========================================================================
+  //  Scope-aware leaf classes
+  // ===========================================================================
+
+  private[scan] final class Ensuring[In, Out, S0](inner: Scan.Aux[In, Out, S0], finalizer: () => Unit)
+    extends Scan[In, Out] {
+    type State = S0
+    def initialState: S0                               = inner.initialState
+    def withInitialState(s: S0): Scan.Aux[In, Out, S0] = new Ensuring[In, Out, S0](inner.withInitialState(s), finalizer)
+    def render: String                                 = inner.render + ".ensuring(...)"
+    private[scan] def applyToReader(source: Reader[In]): ScanReader[Out] { type State = S0 } = {
+      val rd = inner.applyToReader(source)
+      new ScanReader[Out] {
+        type State                            = S0
+        private var ranFinalizer: Boolean     = false
+        def state: S0                         = rd.state
+        override def jvmType: JvmType         = rd.jvmType
+        def isClosed: Boolean                 = rd.isClosed
+        def read[A1 >: Out](sentinel: A1): A1 = rd.read[A1](sentinel)
+        def close(): Unit = {
+          var primary: Throwable = null
+          try rd.close()
+          catch { case t: Throwable => primary = t }
+          if (!ranFinalizer) {
+            ranFinalizer = true
+            try finalizer()
+            catch {
+              case t: Throwable =>
+                if (primary == null) primary = t
+                else primary.addSuppressed(t)
+            }
+          }
+          if (primary != null) throw primary
+        }
+      }
+    }
+  }
+
+  private[scan] final class Scoped[In, Out, S, R](
+    acquire: () => R,
+    release: R => Unit,
+    use: R => Scan.Aux[In, Out, S]
+  ) extends Scan[In, Out] {
+    type State = (R, S)
+    def initialState: (R, S) = {
+      val r = acquire()
+      (r, use(r).initialState)
+    }
+    def withInitialState(s: (R, S)): Scan.Aux[In, Out, (R, S)] = {
+      val r0     = s._1
+      val sInner = s._2
+      new Scoped[In, Out, S, R](() => r0, release, r => use(r).withInitialState(sInner))
+    }
+    def render: String = "Scan.acquireRelease(...)"
+    private[scan] def applyToReader(source: Reader[In]): ScanReader[Out] { type State = (R, S) } = {
+      val r  = acquire()
+      val rd =
+        try use(r).applyToReader(source)
+        catch {
+          case t: Throwable =>
+            try release(r)
+            catch { case _: Throwable => () }
+            throw t
+        }
+      new ScanReader[Out] {
+        type State                            = (R, S)
+        private var released: Boolean         = false
+        def state: (R, S)                     = (r, rd.state)
+        override def jvmType: JvmType         = rd.jvmType
+        def isClosed: Boolean                 = rd.isClosed
+        def read[A1 >: Out](sentinel: A1): A1 = rd.read[A1](sentinel)
+        def close(): Unit = {
+          var primary: Throwable = null
+          try rd.close()
+          catch { case t: Throwable => primary = t }
+          if (!released) {
+            released = true
+            try release(r)
+            catch {
+              case t: Throwable =>
+                if (primary == null) primary = t
+                else primary.addSuppressed(t)
+            }
+          }
+          if (primary != null) throw primary
+        }
+      }
+    }
   }
 
   // ===========================================================================
