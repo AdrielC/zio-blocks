@@ -12,6 +12,7 @@ ZIO Blocks Streams is built on three composable primitives:
 | [`Stream[+E, +A]`](./stream.md)        | A lazy, pull-based sequence of elements that may fail with error `E` | `stream.via(pipe)`    |
 | [`Pipeline[-In, +Out]`](./pipeline.md) | A reusable, composable stream-to-stream transformation               | `pipe.andThen(other)` |
 | [`Sink[+E, -A, +Z]`](./sink.md)        | A stream consumer that produces a typed result `Z`                   | `stream.run(sink)`    |
+| [`Scan[-In, +Out]`](./scan.md)         | A stateful transducer with a typed, evolving `State` member          | `a >>> b`, `a &&& b`  |
 
 ## Overview
 

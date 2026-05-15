@@ -21,12 +21,11 @@ import zio.blocks.combinators.Tuples.Tuples
 /**
  * Merges two `Scan` state types into a normalised carrier.
  *
- * `Combine` is a thin priority ladder over
- * [[zio.blocks.combinators.Tuples]]. Its sole purpose is to make
- * `Scan.lift(...) &&& Scan.lift(...)` (both stateless) compile without an
- * ambiguous-implicit error: upstream `Tuples` provides both `leftUnit` and
- * `rightUnit` at the same priority, which collide when both sides are
- * `Unit`.
+ * `Combine` is a thin priority ladder over [[zio.blocks.combinators.Tuples]].
+ * Its sole purpose is to make `Scan.lift(...) &&& Scan.lift(...)` (both
+ * stateless) compile without an ambiguous-implicit error: upstream `Tuples`
+ * provides both `leftUnit` and `rightUnit` at the same priority, which collide
+ * when both sides are `Unit`.
  *
  * Priority order:
  *   1. `unitUnit` (highest): `Combine[Unit, Unit] { type Out = Unit }`.
@@ -35,8 +34,8 @@ import zio.blocks.combinators.Tuples.Tuples
  *      Scala 3 auto-flattening of nested tuples.
  *
  * Living in the `Scan` companion's package puts every instance in implicit
- * scope at the call site of `>>>` / `&&&` automatically — users never need
- * to import anything.
+ * scope at the call site of `>>>` / `&&&` automatically — users never need to
+ * import anything.
  */
 trait Combine[A, B] { self =>
   type Out
@@ -53,8 +52,8 @@ object Combine extends CombineLowPriority {
    */
   given unitUnit: Aux[Unit, Unit, Unit] = new Combine[Unit, Unit] {
     type Out = Unit
-    def combine(a: Unit, b: Unit): Unit         = ()
-    def separate(out: Unit): (Unit, Unit)       = ((), ())
+    def combine(a: Unit, b: Unit): Unit   = ()
+    def separate(out: Unit): (Unit, Unit) = ((), ())
   }
 }
 
@@ -78,13 +77,12 @@ private[scan] sealed abstract class CombineLowPriority extends CombineLowestPrio
 private[scan] sealed abstract class CombineLowestPriority {
 
   /**
-   * Lowest priority: fall through to upstream
-   * [[zio.blocks.combinators.Tuples]] which provides the Scala 3
-   * auto-flattening of nested tuples.
+   * Lowest priority: fall through to upstream [[zio.blocks.combinators.Tuples]]
+   * which provides the Scala 3 auto-flattening of nested tuples.
    */
   given fromTuples[A, B](using t: Tuples[A, B]): Combine.Aux[A, B, t.Out] = new Combine[A, B] {
     type Out = t.Out
-    def combine(a: A, b: B): t.Out         = t.combine(a, b)
-    def separate(out: t.Out): (A, B)       = t.separate(out)
+    def combine(a: A, b: B): t.Out   = t.combine(a, b)
+    def separate(out: t.Out): (A, B) = t.separate(out)
   }
 }

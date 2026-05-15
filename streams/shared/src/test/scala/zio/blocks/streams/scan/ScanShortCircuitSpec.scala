@@ -61,19 +61,19 @@ object ScanShortCircuitSpec extends StreamsBaseSpec {
     suite("ensuring")(
       test("finalizer runs exactly once on success") {
         var ran = 0
-        val s   = Scan.ensuring(Scan.identity[Int]) { ran += 1 }
+        val s   = Scan.ensuring(Scan.identity[Int])(ran += 1)
         val _   = s.runChunk(Chunk(1, 2, 3))
         assert(ran)(equalTo(1))
       },
       test("finalizer runs exactly once on short-circuit (take(0))") {
         var ran = 0
-        val s   = Scan.ensuring(Scan.take[Int](0)) { ran += 1 }
+        val s   = Scan.ensuring(Scan.take[Int](0))(ran += 1)
         val _   = s.runChunk(Chunk(1, 2, 3))
         assert(ran)(equalTo(1))
       },
       test("finalizer is composable through >>>") {
-        var ran = 0
-        val s   = Scan.ensuring(Scan.identity[Int]) { ran += 1 } >>> Scan.count[Int]
+        var ran        = 0
+        val s          = Scan.ensuring(Scan.identity[Int])(ran += 1) >>> Scan.count[Int]
         val (state, _) = s.runChunk(Chunk(1, 2, 3))
         assert(ran)(equalTo(1)) && assert(state)(equalTo(3L))
       }
@@ -82,7 +82,7 @@ object ScanShortCircuitSpec extends StreamsBaseSpec {
       test("acquire runs once and release runs on close") {
         var acquireCount = 0
         var releaseCount = 0
-        val scan = Scan.acquireRelease[Int, Int, Long, String](
+        val scan         = Scan.acquireRelease[Int, Int, Long, String](
           { acquireCount += 1; "resource" },
           (_: String) => releaseCount += 1
         )(_ => Scan.count[Int])
@@ -95,7 +95,7 @@ object ScanShortCircuitSpec extends StreamsBaseSpec {
       },
       test("release runs even when downstream short-circuits") {
         var releaseCount = 0
-        val scan = Scan.acquireRelease[Int, Int, Long, String](
+        val scan         = Scan.acquireRelease[Int, Int, Long, String](
           "r",
           (_: String) => releaseCount += 1
         )(_ => Scan.take[Int](2))

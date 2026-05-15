@@ -27,8 +27,8 @@ package zio.blocks.streams.scan
  * windows. Modelled on Quasar's `SampleStats` (Apache 2.0; see
  * https://en.wikipedia.org/wiki/Algorithms_for_calculating_variance).
  *
- * Generic-over-`A: Field[A]` is a follow-up; v1 specialises to `Double` to
- * keep the streams module Spire-free (zero deps).
+ * Generic-over-`A: Field[A]` is a follow-up; v1 specialises to `Double` to keep
+ * the streams module Spire-free (zero deps).
  *
  * @param size
  *   Number of observations.
@@ -50,11 +50,11 @@ package zio.blocks.streams.scan
  *   }}}
  */
 final case class SampleStats(
-    size: Long,
-    m1: Double,
-    m2: Double,
-    m3: Double,
-    m4: Double
+  size: Long,
+  m1: Double,
+  m2: Double,
+  m3: Double,
+  m4: Double
 ) {
 
   // ---------------------------------------------------------------------------
@@ -103,8 +103,8 @@ final case class SampleStats(
   def populationStddev: Option[Double] = populationVariance.map(math.sqrt)
 
   /**
-   * Estimated population skewness via the standard `g1` adjustment.
-   * Requires `size > 2` and `m2 != 0`.
+   * Estimated population skewness via the standard `g1` adjustment. Requires
+   * `size > 2` and `m2 != 0`.
    */
   def populationSkewness: Option[Double] =
     if (m2 == 0.0 || size <= 2L) None
@@ -114,8 +114,8 @@ final case class SampleStats(
     }
 
   /**
-   * Estimated population kurtosis via the standard `g2` adjustment.
-   * Requires `size > 3` and `m2 != 0`.
+   * Estimated population kurtosis via the standard `g2` adjustment. Requires
+   * `size > 3` and `m2 != 0`.
    */
   def populationKurtosis: Option[Double] = {
     val n     = size.toDouble
@@ -137,11 +137,11 @@ final case class SampleStats(
    * Implementation: Welford's recurrence (numerically stable).
    */
   def observe(x: Double): SampleStats = {
-    val n        = (size + 1L).toDouble
-    val delta    = x - m1
-    val deltaN   = delta / n
-    val deltaN2  = deltaN * deltaN
-    val term1    = delta * deltaN * size.toDouble
+    val n       = (size + 1L).toDouble
+    val delta   = x - m1
+    val deltaN  = delta / n
+    val deltaN2 = deltaN * deltaN
+    val term1   = delta * deltaN * size.toDouble
     SampleStats(
       size + 1L,
       m1 + deltaN,
@@ -155,8 +155,8 @@ final case class SampleStats(
 
   /**
    * Combine with another `SampleStats` to produce stats about the union of
-   * their observations. Implementation via the Chan parallel algorithm;
-   * forms a commutative monoid with [[SampleStats.empty]] as identity.
+   * their observations. Implementation via the Chan parallel algorithm; forms a
+   * commutative monoid with [[SampleStats.empty]] as identity.
    */
   def merge(b: SampleStats): SampleStats =
     if (b.size == 0L) this
@@ -197,7 +197,9 @@ final case class SampleStats(
  */
 object SampleStats {
 
-  /** Stats over zero observations. Identity element of [[SampleStats.merge]]. */
+  /**
+   * Stats over zero observations. Identity element of [[SampleStats.merge]].
+   */
   val empty: SampleStats = SampleStats(0L, 0.0, 0.0, 0.0, 0.0)
 
   /** Stats over the frequency of an observation. */

@@ -1081,52 +1081,34 @@ object Scan {
   }
 
   private[scan] final class BothMailbox[In](source: Reader[In]) {
-    private var slot: Any            = null
-    private var slotPresent: Boolean = false
-    private var leftSeen: Boolean    = true
-    private var rightSeen: Boolean   = true
-    private var endReached: Boolean  = false
-
-    private def fillIfNeeded(): Unit =
-      if (leftSeen && rightSeen && !endReached) {
-        val v = source.read[Any](EndOfStream)
-        if (v.asInstanceOf[AnyRef] eq EndOfStream) {
-          endReached  = true
-          slotPresent = false
-        } else {
-          slot        = v
-          slotPresent = true
-          leftSeen    = false
-          rightSeen   = false
-        }
-      }
+    private val leftQ  = new scala.collection.mutable.ArrayDeque[Any](4)
+    private val rightQ = new scala.collection.mutable.ArrayDeque[Any](4)
+    private var endReached: Boolean = false
 
     val leftView: Reader[In] = new Reader[In] {
-      def isClosed: Boolean = endReached && slotPresent == false
+      def isClosed: Boolean = endReached && leftQ.isEmpty
       def close(): Unit     = source.close()
       def read[A1 >: In](sentinel: A1): A1 = {
-        fillIfNeeded()
-        if (!slotPresent) sentinel
+        if (leftQ.nonEmpty) leftQ.removeHead().asInstanceOf[A1]
+        else if (endReached) sentinel
         else {
-          leftSeen = true
-          val v    = slot
-          if (rightSeen) { slotPresent = false; slot = null }
-          v.asInstanceOf[A1]
+          val v = source.read[Any](EndOfStream)
+          if (v.asInstanceOf[AnyRef] eq EndOfStream) { endReached = true; sentinel }
+          else { rightQ.append(v); v.asInstanceOf[A1] }
         }
       }
     }
 
     val rightView: Reader[In] = new Reader[In] {
-      def isClosed: Boolean = endReached && slotPresent == false
+      def isClosed: Boolean = endReached && rightQ.isEmpty
       def close(): Unit     = source.close()
       def read[A1 >: In](sentinel: A1): A1 = {
-        fillIfNeeded()
-        if (!slotPresent) sentinel
+        if (rightQ.nonEmpty) rightQ.removeHead().asInstanceOf[A1]
+        else if (endReached) sentinel
         else {
-          rightSeen = true
-          val v     = slot
-          if (leftSeen) { slotPresent = false; slot = null }
-          v.asInstanceOf[A1]
+          val v = source.read[Any](EndOfStream)
+          if (v.asInstanceOf[AnyRef] eq EndOfStream) { endReached = true; sentinel }
+          else { leftQ.append(v); v.asInstanceOf[A1] }
         }
       }
     }

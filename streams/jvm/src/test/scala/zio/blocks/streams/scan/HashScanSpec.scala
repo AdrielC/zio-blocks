@@ -43,7 +43,8 @@ object HashScanSpec extends StreamsBaseSpec {
     suite("digest")(
       test("matches MessageDigest for empty input") {
         val state =
-          Stream.fromChunk(Chunk.empty[Chunk[Byte]])
+          Stream
+            .fromChunk(Chunk.empty[Chunk[Byte]])
             .run(HashScan.digest(HashScan.HashAlgo.SHA256).toSink[Nothing])
             .toOption
             .get
@@ -51,7 +52,7 @@ object HashScanSpec extends StreamsBaseSpec {
       },
       test("matches MessageDigest for a single chunk") {
         val payload = "hello, world".getBytes("UTF-8")
-        val state =
+        val state   =
           Stream(Chunk.fromArray(payload))
             .run(HashScan.digest(HashScan.HashAlgo.SHA256).toSink[Nothing])
             .toOption
@@ -60,15 +61,16 @@ object HashScanSpec extends StreamsBaseSpec {
       },
       test("matches MessageDigest for many small chunks (1-byte chunks)") {
         val payload = "the quick brown fox jumps over the lazy dog".getBytes("UTF-8")
-        val state =
-          Stream.fromIterable(chunkedBytes(payload, 1))
+        val state   =
+          Stream
+            .fromIterable(chunkedBytes(payload, 1))
             .run(HashScan.digest(HashScan.HashAlgo.SHA256).toSink[Nothing])
             .toOption
             .get
         assert(state)(equalTo(reference("SHA-256", payload)))
       },
       test("matches MessageDigest across multiple algorithms and chunk sizes") {
-        val rng     = new scala.util.Random(0xC0FFEE)
+        val rng     = new scala.util.Random(0xc0ffee)
         val payload = Array.fill[Byte](64 * 1024)(0)
         rng.nextBytes(payload)
 
@@ -84,7 +86,8 @@ object HashScanSpec extends StreamsBaseSpec {
           chunkSize    <- chunkSizes
         } yield {
           val state =
-            Stream.fromIterable(chunkedBytes(payload, chunkSize))
+            Stream
+              .fromIterable(chunkedBytes(payload, chunkSize))
               .run(HashScan.digest(algo).toSink[Nothing])
               .toOption
               .get
@@ -100,7 +103,8 @@ object HashScanSpec extends StreamsBaseSpec {
           Chunk.fromArray("baz".getBytes)
         )
         val out =
-          Stream.fromIterable(chunks)
+          Stream
+            .fromIterable(chunks)
             .via(HashScan.digest(HashScan.HashAlgo.SHA256).toPipeline)
             .runCollect
             .toOption
@@ -111,7 +115,7 @@ object HashScanSpec extends StreamsBaseSpec {
     suite("digestOnly")(
       test("emits no elements but surfaces the same digest as digest") {
         val payload = "hello".getBytes
-        val state =
+        val state   =
           Stream(Chunk.fromArray(payload))
             .run(HashScan.digestOnly(HashScan.HashAlgo.SHA256).toSink[Nothing])
             .toOption
@@ -121,9 +125,9 @@ object HashScanSpec extends StreamsBaseSpec {
     ),
     suite("composition")(
       test("digest &&& count surfaces both the digest and the chunk count") {
-        val chunks = List.tabulate(5)(i => Chunk.fromArray(s"chunk$i".getBytes))
-        val scan   = HashScan.digest(HashScan.HashAlgo.SHA256) &&& Scan.count[Chunk[Byte]]
-        val state  = Stream.fromIterable(chunks).run(scan.toSink[Nothing]).toOption.get
+        val chunks    = List.tabulate(5)(i => Chunk.fromArray(s"chunk$i".getBytes))
+        val scan      = HashScan.digest(HashScan.HashAlgo.SHA256) &&& Scan.count[Chunk[Byte]]
+        val state     = Stream.fromIterable(chunks).run(scan.toSink[Nothing]).toOption.get
         val refDigest = reference("SHA-256", chunks.map(_.toArray).foldLeft(Array.empty[Byte])(_ ++ _))
         assert(state._1)(equalTo(refDigest)) && assert(state._2)(equalTo(5L))
       }

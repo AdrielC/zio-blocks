@@ -24,13 +24,14 @@ import zio.blocks.streams.internal.EndOfStream
 import zio.blocks.streams.io.Reader
 
 /**
- * JVM-only chunk-aware byte-hashing scans backed by `java.security.MessageDigest`.
+ * JVM-only chunk-aware byte-hashing scans backed by
+ * `java.security.MessageDigest`.
  *
- * The scans operate on a `Stream[E, Chunk[Byte]]` (one chunk per pull) and
- * call `MessageDigest.update(arr, off, len)` exactly once per chunk —
- * **true bulk consumption**, not a per-byte loop. Callers with a
- * `Stream[E, Byte]` should pair with a chunking adapter that batches bytes
- * into `Chunk[Byte]`s of a chosen size before piping into a hash scan.
+ * The scans operate on a `Stream[E, Chunk[Byte]]` (one chunk per pull) and call
+ * `MessageDigest.update(arr, off, len)` exactly once per chunk — **true bulk
+ * consumption**, not a per-byte loop. Callers with a `Stream[E, Byte]` should
+ * pair with a chunking adapter that batches bytes into `Chunk[Byte]`s of a
+ * chosen size before piping into a hash scan.
  *
  * @example
  *   {{{
@@ -53,8 +54,7 @@ object HashScan {
    *
    * Includes the three SHA family algorithms guaranteed to be available on
    * every standard JVM by `java.security.MessageDigest`. Use
-   * [[HashAlgo.Custom]] for arbitrary names supported by the host JCE
-   * provider.
+   * [[HashAlgo.Custom]] for arbitrary names supported by the host JCE provider.
    */
   sealed abstract class HashAlgo(val name: String) extends Product with Serializable
   object HashAlgo {
@@ -76,8 +76,8 @@ object HashScan {
   }
 
   /**
-   * Pass each input `Chunk[Byte]` through unchanged while updating a
-   * running digest. The final digest is surfaced via the scan's state.
+   * Pass each input `Chunk[Byte]` through unchanged while updating a running
+   * digest. The final digest is surfaced via the scan's state.
    *
    * Each input chunk is fed to `MessageDigest.update(arr, off, len)` in a
    * single JNI call — no per-byte loop.
@@ -86,8 +86,8 @@ object HashScan {
     new DigestScan(algo)
 
   /**
-   * Like [[digest]] but consumes each chunk silently (no output). Useful
-   * when you only want the final digest.
+   * Like [[digest]] but consumes each chunk silently (no output). Useful when
+   * you only want the final digest.
    */
   def digestOnly(algo: HashAlgo): Scan.Aux[Chunk[Byte], Nothing, Chunk[Byte]] =
     new DigestOnlyScan(algo)
@@ -98,7 +98,7 @@ object HashScan {
 
   /** Lightweight container for the live digest + cached final value. */
   private final class HashState(algo: HashAlgo) {
-    val digest: MessageDigest = MessageDigest.getInstance(algo.name)
+    val digest: MessageDigest            = MessageDigest.getInstance(algo.name)
     private var finalDigest: Chunk[Byte] = Chunk.empty
     private var finalised: Boolean       = false
 
@@ -111,16 +111,15 @@ object HashScan {
     def finalise(): Chunk[Byte] = {
       if (!finalised) {
         finalDigest = Chunk.fromArray(digest.digest())
-        finalised   = true
+        finalised = true
       }
       finalDigest
     }
   }
 
-  private final class DigestScan(algo: HashAlgo)
-      extends Scan[Chunk[Byte], Chunk[Byte]] {
+  private final class DigestScan(algo: HashAlgo) extends Scan[Chunk[Byte], Chunk[Byte]] {
     type State = Chunk[Byte]
-    def initialState: Chunk[Byte] = Chunk.empty
+    def initialState: Chunk[Byte]                                                         = Chunk.empty
     def withInitialState(s: Chunk[Byte]): Scan.Aux[Chunk[Byte], Chunk[Byte], Chunk[Byte]] =
       // NOTE: a true mid-stream resume of a streaming MessageDigest would
       // require persisting MessageDigest internals, which the standard
@@ -130,15 +129,15 @@ object HashScan {
       // simply return a fresh scan, ignoring the saved state, since
       // MessageDigest snapshots aren't a portable concept.
       new DigestScan(algo)
-    def render: String = "HashScan.digest(" + algo.name + ")"
+    def render: String                                                                                                 = "HashScan.digest(" + algo.name + ")"
     private[scan] def applyToReader(source: Reader[Chunk[Byte]]): ScanReader[Chunk[Byte]] { type State = Chunk[Byte] } =
       new ScanReader[Chunk[Byte]] {
-        type State                      = Chunk[Byte]
-        private val st                  = new HashState(algo)
-        private var sourceDone: Boolean = false
-        def state: Chunk[Byte]          = if (sourceDone) st.finalise() else Chunk.empty
-        def isClosed: Boolean           = source.isClosed
-        override def jvmType: JvmType   = source.jvmType
+        type State = Chunk[Byte]
+        private val st                                = new HashState(algo)
+        private var sourceDone: Boolean               = false
+        def state: Chunk[Byte]                        = if (sourceDone) st.finalise() else Chunk.empty
+        def isClosed: Boolean                         = source.isClosed
+        override def jvmType: JvmType                 = source.jvmType
         def read[A1 >: Chunk[Byte]](sentinel: A1): A1 = {
           val v = source.read[Any](EndOfStream)
           if (v.asInstanceOf[AnyRef] eq EndOfStream) {
@@ -160,20 +159,19 @@ object HashScan {
       }
   }
 
-  private final class DigestOnlyScan(algo: HashAlgo)
-      extends Scan[Chunk[Byte], Nothing] {
+  private final class DigestOnlyScan(algo: HashAlgo) extends Scan[Chunk[Byte], Nothing] {
     type State = Chunk[Byte]
-    def initialState: Chunk[Byte]                                                  = Chunk.empty
+    def initialState: Chunk[Byte]                                                     = Chunk.empty
     def withInitialState(s: Chunk[Byte]): Scan.Aux[Chunk[Byte], Nothing, Chunk[Byte]] =
       new DigestOnlyScan(algo)
-    def render: String = "HashScan.digestOnly(" + algo.name + ")"
+    def render: String                                                                                             = "HashScan.digestOnly(" + algo.name + ")"
     private[scan] def applyToReader(source: Reader[Chunk[Byte]]): ScanReader[Nothing] { type State = Chunk[Byte] } =
       new ScanReader[Nothing] {
-        type State                      = Chunk[Byte]
-        private val st                  = new HashState(algo)
-        private var sourceDone: Boolean = false
-        def state: Chunk[Byte]          = if (sourceDone) st.finalise() else Chunk.empty
-        def isClosed: Boolean           = source.isClosed
+        type State = Chunk[Byte]
+        private val st                            = new HashState(algo)
+        private var sourceDone: Boolean           = false
+        def state: Chunk[Byte]                    = if (sourceDone) st.finalise() else Chunk.empty
+        def isClosed: Boolean                     = source.isClosed
         def read[A1 >: Nothing](sentinel: A1): A1 = {
           var v = source.read[Any](EndOfStream)
           while (v.asInstanceOf[AnyRef] ne EndOfStream) {

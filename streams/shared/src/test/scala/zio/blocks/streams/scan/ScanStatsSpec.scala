@@ -50,9 +50,9 @@ object ScanStatsSpec extends StreamsBaseSpec {
         assert(s.populationVariance.get)(closeTo(32.0 / 7.0))
       },
       test("merge is associative and empty is identity (small fixed cases)") {
-        val a = SampleStats.fromIterable(List(1.0, 2.0))
-        val b = SampleStats.fromIterable(List(3.0, 4.0, 5.0))
-        val c = SampleStats.fromIterable(List(6.0))
+        val a    = SampleStats.fromIterable(List(1.0, 2.0))
+        val b    = SampleStats.fromIterable(List(3.0, 4.0, 5.0))
+        val c    = SampleStats.fromIterable(List(6.0))
         val ab_c = (a.merge(b)).merge(c)
         val a_bc = a.merge(b.merge(c))
         assert(ab_c.size)(equalTo(a_bc.size)) &&
@@ -63,10 +63,10 @@ object ScanStatsSpec extends StreamsBaseSpec {
       },
       test("merge agrees with single-pass for randomised splits") {
         check(Gen.int(1, 50)) { n =>
-          val xs   = (1 to n).map(_.toDouble * 0.5).toList
-          val full = SampleStats.fromIterable(xs)
+          val xs     = (1 to n).map(_.toDouble * 0.5).toList
+          val full   = SampleStats.fromIterable(xs)
           val (l, r) = xs.splitAt(n / 2)
-          val mer  = SampleStats.fromIterable(l).merge(SampleStats.fromIterable(r))
+          val mer    = SampleStats.fromIterable(l).merge(SampleStats.fromIterable(r))
           assert(mer.size)(equalTo(full.size)) &&
           assert(mer.mean)(closeTo(full.mean)) &&
           assert(mer.m2)(closeTo(full.m2))
@@ -88,8 +88,8 @@ object ScanStatsSpec extends StreamsBaseSpec {
         assert(state.mean)(closeTo(2.5))
       },
       test("Scan.sampleStatsFromInitial resumes from a saved value") {
-        val s1 = Stream.fromChunk(Chunk(1.0, 2.0, 3.0)).run(Scan.sampleStats.toSink[Nothing]).toOption.get
-        val s2 = Stream.fromChunk(Chunk(4.0, 5.0)).run(Scan.sampleStatsFromInitial(s1).toSink[Nothing]).toOption.get
+        val s1   = Stream.fromChunk(Chunk(1.0, 2.0, 3.0)).run(Scan.sampleStats.toSink[Nothing]).toOption.get
+        val s2   = Stream.fromChunk(Chunk(4.0, 5.0)).run(Scan.sampleStatsFromInitial(s1).toSink[Nothing]).toOption.get
         val full = SampleStats.fromIterable(List(1.0, 2.0, 3.0, 4.0, 5.0))
         assertTrue(s2.size == full.size) && assert(s2.mean)(closeTo(full.mean))
       },
@@ -126,7 +126,7 @@ object ScanStatsSpec extends StreamsBaseSpec {
       },
       test("tumblingTime emits one chunk per window-duration") {
         val durationNs = 100L
-        val input = Chunk(
+        val input      = Chunk(
           Timestamped(0L, "a"),
           Timestamped(50L, "b"),
           Timestamped(100L, "c"),
@@ -156,8 +156,8 @@ object ScanStatsSpec extends StreamsBaseSpec {
     suite("MACD-style chain")(
       test("timestamped >>> tumblingTime >>> windowMean >>> pairwise >>> diff >>> ewma") {
         // Synthetic: 60 points evenly spaced 1 second apart, value = i.toDouble.
-        val durationNs  = 10L * 1_000_000_000L  // 10s windows
-        val input = Chunk.fromIterable(
+        val durationNs = 10L * 1_000_000_000L // 10s windows
+        val input      = Chunk.fromIterable(
           (0 until 60).map(i => Timestamped(i.toLong * 1_000_000_000L, i.toDouble))
         )
         val pipeline =
@@ -173,14 +173,19 @@ object ScanStatsSpec extends StreamsBaseSpec {
             Scan.ewma(0.2)
 
         val (state, out) =
-          Stream.fromChunk(input).via(pipeline.toPipeline).runCollect.toOption.get
+          Stream
+            .fromChunk(input)
+            .via(pipeline.toPipeline)
+            .runCollect
+            .toOption
+            .get
             .foldLeft((0L, Chunk.empty[Double])) { case ((_, acc), v) => (0L, acc :+ v) } match {
-              case (_, allOut) =>
-                // Re-run via toSink to get the final state separately
-                val st = Stream.fromChunk(input).run(pipeline.toSink[Nothing]).toOption.get
-                (1L, allOut) // placeholder; we ignore the placeholder below
-                (st, allOut)
-            }
+            case (_, allOut) =>
+              // Re-run via toSink to get the final state separately
+              val st = Stream.fromChunk(input).run(pipeline.toSink[Nothing]).toOption.get
+              (1L, allOut) // placeholder; we ignore the placeholder below
+              (st, allOut)
+          }
 
         // 6 windows -> 5 diffs -> 5 EWMA outputs
         // mean of window i (i in 0..5) = average of values [10i, 10i+9]
