@@ -172,20 +172,9 @@ object ScanStatsSpec extends StreamsBaseSpec {
             Scan.lift[(Double, Double), Double] { case (p, c) => c - p } >>>
             Scan.ewma(0.2)
 
-        val (state, out) =
-          Stream
-            .fromChunk(input)
-            .via(pipeline.toPipeline)
-            .runCollect
-            .toOption
-            .get
-            .foldLeft((0L, Chunk.empty[Double])) { case ((_, acc), v) => (0L, acc :+ v) } match {
-            case (_, allOut) =>
-              // Re-run via toSink to get the final state separately
-              val st = Stream.fromChunk(input).run(pipeline.toSink[Nothing]).toOption.get
-              (1L, allOut) // placeholder; we ignore the placeholder below
-              (st, allOut)
-          }
+        val outChunk     = Stream.fromChunk(input).via(pipeline.toPipeline).runCollect.toOption.get
+        val st           = Stream.fromChunk(input).run(pipeline.toSink[Nothing]).toOption.get
+        val (state, out) = (st, outChunk)
 
         // 6 windows -> 5 diffs -> 5 EWMA outputs
         // mean of window i (i in 0..5) = average of values [10i, 10i+9]
