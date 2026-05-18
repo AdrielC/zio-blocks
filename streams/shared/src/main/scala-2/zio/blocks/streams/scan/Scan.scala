@@ -94,6 +94,94 @@ abstract class Scan[-In, +Out] { self =>
     new Scan.Both[In, Out, Out2, State, S2, t.Out](self, that, t)
 
   // ---------------------------------------------------------------------------
+  //  Arrow.Choice: Either-input ops (parity with fs2 `Scan.choice`/`choose`)
+  // ---------------------------------------------------------------------------
+
+  final def +++[In2, Out2 >: Out, S2](
+    that: Scan.Aux[In2, Out2, S2]
+  )(implicit t: Combine[State, S2]): Scan.Aux[Either[In, In2], Out2, t.Out] =
+    new Scan.Choice[In, In2, Out2, State, S2, t.Out](
+      self.asInstanceOf[Scan.Aux[In, Out2, State]],
+      that,
+      t
+    )
+
+  final def choice[In2, Out2 >: Out, S2](
+    that: Scan.Aux[In2, Out2, S2]
+  )(implicit t: Combine[State, S2]): Scan.Aux[Either[In, In2], Out2, t.Out] = self +++ that
+
+  final def |||[In2, Out2, S2](
+    that: Scan.Aux[In2, Out2, S2]
+  )(implicit t: Combine[State, S2]): Scan.Aux[Either[In, In2], Either[Out, Out2], t.Out] =
+    new Scan.Choose[In, In2, Out, Out2, State, S2, t.Out](self, that, t)
+
+  final def choose[In2, Out2, S2](
+    that: Scan.Aux[In2, Out2, S2]
+  )(implicit t: Combine[State, S2]): Scan.Aux[Either[In, In2], Either[Out, Out2], t.Out] = self ||| that
+
+  // ---------------------------------------------------------------------------
+  //  Arrow split (***)
+  // ---------------------------------------------------------------------------
+
+  final def ***[In2, Out2, S2](
+    that: Scan.Aux[In2, Out2, S2]
+  )(implicit t: Combine[State, S2]): Scan.Aux[(In, In2), (Out, Out2), t.Out] =
+    new Scan.Parallel[In, In2, Out, Out2, State, S2, t.Out](self, that, t)
+
+  final def split[In2, Out2, S2](
+    that: Scan.Aux[In2, Out2, S2]
+  )(implicit t: Combine[State, S2]): Scan.Aux[(In, In2), (Out, Out2), t.Out] = self *** that
+
+  // ---------------------------------------------------------------------------
+  //  Strong arrow: tuple/either lensing
+  // ---------------------------------------------------------------------------
+
+  final def first[A]: Scan.Aux[(In, A), (Out, A), State] = new Scan.First[In, A, Out, State](self)
+  final def second[A]: Scan.Aux[(A, In), (A, Out), State] = new Scan.Second[In, A, Out, State](self)
+
+  final def lens[I2, O2](get: I2 => In, set: (I2, Out) => O2): Scan.Aux[I2, O2, State] =
+    new Scan.Lensed[In, I2, Out, O2, State](self, get, set)
+
+  final def semilens[I2, O2](
+    extract: I2 => Either[O2, In],
+    inject: (I2, Out) => O2
+  ): Scan.Aux[I2, O2, State] =
+    new Scan.Semilensed[In, I2, Out, O2, State](self, extract, inject)
+
+  final def semipass[I2, O2 >: Out](extract: I2 => Either[O2, In]): Scan.Aux[I2, O2, State] =
+    semilens(extract, (_, o) => o)
+
+  final def left[A]: Scan.Aux[Either[In, A], Either[Out, A], State] =
+    semilens(
+      {
+        case Left(i)  => Right(i)
+        case Right(a) => Left(Right(a))
+      },
+      (_, o) => Left(o)
+    )
+
+  final def right[A]: Scan.Aux[Either[A, In], Either[A, Out], State] =
+    semilens(
+      {
+        case Right(i) => Right(i)
+        case Left(a)  => Left(Left(a))
+      },
+      (_, o) => Right(o)
+    )
+
+  // ---------------------------------------------------------------------------
+  //  Single-element step (fs2 parity)
+  // ---------------------------------------------------------------------------
+
+  final def step(i: In): (Scan.Aux[In, Out, State], Chunk[Out]) = {
+    val (state, out) = self.runChunk(Chunk.single(i.asInstanceOf[In @uncheckedVariance]))
+    (
+      self.withInitialState(state).asInstanceOf[Scan.Aux[In, Out, State]],
+      out.asInstanceOf[Chunk[Out]]
+    )
+  }
+
+  // ---------------------------------------------------------------------------
   //  Output / input transforms
   // ---------------------------------------------------------------------------
 
@@ -1003,24 +1091,24 @@ object Scan {
   // ===========================================================================
 
   private[scan] final class AndThen[In, Mid, Out, SA, SB, S0](
-    val first: Scan.Aux[In, Mid, SA],
-    val second: Scan.Aux[Mid, Out, SB],
+    val fst: Scan.Aux[In, Mid, SA],
+    val snd: Scan.Aux[Mid, Out, SB],
     val t: Combine.Aux[SA, SB, S0]
   ) extends Scan[In, Out] {
     type State = S0
-    def initialState: S0 = t.combine(first.initialState, second.initialState)
+    def initialState: S0 = t.combine(fst.initialState, snd.initialState)
     def withInitialState(s: S0): Scan.Aux[In, Out, S0] = {
       val (a, b) = t.separate(s)
       new AndThen[In, Mid, Out, SA, SB, S0](
-        first.withInitialState(a),
-        second.withInitialState(b),
+        fst.withInitialState(a),
+        snd.withInitialState(b),
         t
       )
     }
-    def render: String = first.render + " >>> " + second.render
+    def render: String = fst.render + " >>> " + snd.render
     private[scan] def applyToReader(source: Reader[In]): ScanReader[Out] { type State = S0 } = {
-      val mid: ScanReader[Mid] { type State = SA } = first.applyToReader(source)
-      val out: ScanReader[Out] { type State = SB } = second.applyToReader(mid)
+      val mid: ScanReader[Mid] { type State = SA } = fst.applyToReader(source)
+      val out: ScanReader[Out] { type State = SB } = snd.applyToReader(mid)
       new ScanReader[Out] {
         type State                            = S0
         def state: S0                         = t.combine(mid.state, out.state)
@@ -1033,25 +1121,25 @@ object Scan {
   }
 
   private[scan] final class Both[In, OA, OB, SA, SB, S0](
-    val left: Scan.Aux[In, OA, SA],
-    val right: Scan.Aux[In, OB, SB],
+    val lhs: Scan.Aux[In, OA, SA],
+    val rhs: Scan.Aux[In, OB, SB],
     val t: Combine.Aux[SA, SB, S0]
   ) extends Scan[In, (OA, OB)] {
     type State = S0
-    def initialState: S0 = t.combine(left.initialState, right.initialState)
+    def initialState: S0 = t.combine(lhs.initialState, rhs.initialState)
     def withInitialState(s: S0): Scan.Aux[In, (OA, OB), S0] = {
       val (a, b) = t.separate(s)
       new Both[In, OA, OB, SA, SB, S0](
-        left.withInitialState(a),
-        right.withInitialState(b),
+        lhs.withInitialState(a),
+        rhs.withInitialState(b),
         t
       )
     }
-    def render: String = "(" + left.render + " &&& " + right.render + ")"
+    def render: String = "(" + lhs.render + " &&& " + rhs.render + ")"
     private[scan] def applyToReader(source: Reader[In]): ScanReader[(OA, OB)] { type State = S0 } = {
       val mb                                    = new BothMailbox[In](source)
-      val l: ScanReader[OA] { type State = SA } = left.applyToReader(mb.leftView)
-      val r: ScanReader[OB] { type State = SB } = right.applyToReader(mb.rightView)
+      val l: ScanReader[OA] { type State = SA } = lhs.applyToReader(mb.leftView)
+      val r: ScanReader[OB] { type State = SB } = rhs.applyToReader(mb.rightView)
       new ScanReader[(OA, OB)] {
         type State                                 = S0
         def state: S0                              = t.combine(l.state, r.state)
@@ -1109,6 +1197,398 @@ object Scan {
           val v = source.read[Any](EndOfStream)
           if (v.asInstanceOf[AnyRef] eq EndOfStream) { endReached = true; sentinel }
           else { leftQ.append(v); v.asInstanceOf[A1] }
+        }
+      }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  //  Choice / Choose / Parallel / Strong leaves
+  // ---------------------------------------------------------------------------
+
+  private[scan] final class Choice[InL, InR, Out, SA, SB, S0](
+    val lhs: Scan.Aux[InL, Out, SA],
+    val rhs: Scan.Aux[InR, Out, SB],
+    val t: Combine.Aux[SA, SB, S0]
+  ) extends Scan[Either[InL, InR], Out] {
+    type State = S0
+    def initialState: S0 = t.combine(lhs.initialState, rhs.initialState)
+    def withInitialState(s: S0): Scan.Aux[Either[InL, InR], Out, S0] = {
+      val (a, b) = t.separate(s)
+      new Choice[InL, InR, Out, SA, SB, S0](lhs.withInitialState(a), rhs.withInitialState(b), t)
+    }
+    def render: String = "(" + lhs.render + " +++ " + rhs.render + ")"
+    private[scan] def applyToReader(
+      source: Reader[Either[InL, InR]]
+    ): ScanReader[Out] { type State = S0 } = {
+      val leftDemux  = new EitherDemux[InL](source)
+      val rightDemux = new EitherDemux[InR](source)
+      val l          = lhs.applyToReader(leftDemux.view)
+      val r          = rhs.applyToReader(rightDemux.view)
+      new ScanReader[Out] {
+        type State                            = S0
+        def state: S0                         = t.combine(l.state, r.state)
+        def isClosed: Boolean                 = source.isClosed
+        def read[A1 >: Out](sentinel: A1): A1 = {
+          val v = source.read[Any](EndOfStream)
+          if (v.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+          else
+            v.asInstanceOf[Either[InL, InR]] match {
+              case Left(li) =>
+                leftDemux.enqueue(li)
+                val o = l.read[Any](EndOfStream)
+                if (o.asInstanceOf[AnyRef] eq EndOfStream) sentinel else o.asInstanceOf[A1]
+              case Right(ri) =>
+                rightDemux.enqueue(ri)
+                val o = r.read[Any](EndOfStream)
+                if (o.asInstanceOf[AnyRef] eq EndOfStream) sentinel else o.asInstanceOf[A1]
+            }
+        }
+        def close(): Unit = {
+          var primary: Throwable = null
+          try l.close()
+          catch { case t: Throwable => primary = t }
+          try r.close()
+          catch {
+            case t: Throwable =>
+              if (primary == null) primary = t else primary.addSuppressed(t)
+          }
+          try source.close()
+          catch {
+            case t: Throwable =>
+              if (primary == null) primary = t else primary.addSuppressed(t)
+          }
+          if (primary != null) throw primary
+        }
+      }
+    }
+  }
+
+  private[scan] final class Choose[InL, InR, OL, OR, SA, SB, S0](
+    val lhs: Scan.Aux[InL, OL, SA],
+    val rhs: Scan.Aux[InR, OR, SB],
+    val t: Combine.Aux[SA, SB, S0]
+  ) extends Scan[Either[InL, InR], Either[OL, OR]] {
+    type State = S0
+    def initialState: S0 = t.combine(lhs.initialState, rhs.initialState)
+    def withInitialState(s: S0): Scan.Aux[Either[InL, InR], Either[OL, OR], S0] = {
+      val (a, b) = t.separate(s)
+      new Choose[InL, InR, OL, OR, SA, SB, S0](lhs.withInitialState(a), rhs.withInitialState(b), t)
+    }
+    def render: String = "(" + lhs.render + " ||| " + rhs.render + ")"
+    private[scan] def applyToReader(
+      source: Reader[Either[InL, InR]]
+    ): ScanReader[Either[OL, OR]] { type State = S0 } = {
+      val leftDemux  = new EitherDemux[InL](source)
+      val rightDemux = new EitherDemux[InR](source)
+      val l          = lhs.applyToReader(leftDemux.view)
+      val r          = rhs.applyToReader(rightDemux.view)
+      new ScanReader[Either[OL, OR]] {
+        type State                                       = S0
+        def state: S0                                    = t.combine(l.state, r.state)
+        def isClosed: Boolean                            = source.isClosed
+        def read[A1 >: Either[OL, OR]](sentinel: A1): A1 = {
+          val v = source.read[Any](EndOfStream)
+          if (v.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+          else
+            v.asInstanceOf[Either[InL, InR]] match {
+              case Left(li) =>
+                leftDemux.enqueue(li)
+                val o = l.read[Any](EndOfStream)
+                if (o.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+                else Left(o.asInstanceOf[OL]).asInstanceOf[A1]
+              case Right(ri) =>
+                rightDemux.enqueue(ri)
+                val o = r.read[Any](EndOfStream)
+                if (o.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+                else Right(o.asInstanceOf[OR]).asInstanceOf[A1]
+            }
+        }
+        def close(): Unit = {
+          var primary: Throwable = null
+          try l.close()
+          catch { case t: Throwable => primary = t }
+          try r.close()
+          catch {
+            case t: Throwable =>
+              if (primary == null) primary = t else primary.addSuppressed(t)
+          }
+          try source.close()
+          catch {
+            case t: Throwable =>
+              if (primary == null) primary = t else primary.addSuppressed(t)
+          }
+          if (primary != null) throw primary
+        }
+      }
+    }
+  }
+
+  private[scan] final class EitherDemux[I](source: Reader[_]) {
+    private val queue       = new scala.collection.mutable.ArrayDeque[I](4)
+    def enqueue(v: I): Unit = queue.append(v)
+    val view: Reader[I] = new Reader[I] {
+      def isClosed: Boolean                = source.isClosed && queue.isEmpty
+      def close(): Unit                    = source.close()
+      def read[A1 >: I](sentinel: A1): A1 =
+        if (queue.nonEmpty) queue.removeHead().asInstanceOf[A1] else sentinel
+    }
+  }
+
+  private[scan] final class Parallel[InL, InR, OL, OR, SA, SB, S0](
+    val lhs: Scan.Aux[InL, OL, SA],
+    val rhs: Scan.Aux[InR, OR, SB],
+    val t: Combine.Aux[SA, SB, S0]
+  ) extends Scan[(InL, InR), (OL, OR)] {
+    type State = S0
+    def initialState: S0 = t.combine(lhs.initialState, rhs.initialState)
+    def withInitialState(s: S0): Scan.Aux[(InL, InR), (OL, OR), S0] = {
+      val (a, b) = t.separate(s)
+      new Parallel[InL, InR, OL, OR, SA, SB, S0](lhs.withInitialState(a), rhs.withInitialState(b), t)
+    }
+    def render: String = "(" + lhs.render + " *** " + rhs.render + ")"
+    private[scan] def applyToReader(
+      source: Reader[(InL, InR)]
+    ): ScanReader[(OL, OR)] { type State = S0 } = {
+      val leftQ  = new scala.collection.mutable.ArrayDeque[InL](4)
+      val rightQ = new scala.collection.mutable.ArrayDeque[InR](4)
+      val leftView: Reader[InL] = new Reader[InL] {
+        def isClosed: Boolean                  = source.isClosed && leftQ.isEmpty
+        def close(): Unit                      = source.close()
+        def read[A1 >: InL](sentinel: A1): A1 =
+          if (leftQ.nonEmpty) leftQ.removeHead().asInstanceOf[A1] else sentinel
+      }
+      val rightView: Reader[InR] = new Reader[InR] {
+        def isClosed: Boolean                  = source.isClosed && rightQ.isEmpty
+        def close(): Unit                      = source.close()
+        def read[A1 >: InR](sentinel: A1): A1 =
+          if (rightQ.nonEmpty) rightQ.removeHead().asInstanceOf[A1] else sentinel
+      }
+      val l = lhs.applyToReader(leftView)
+      val r = rhs.applyToReader(rightView)
+      new ScanReader[(OL, OR)] {
+        type State                                 = S0
+        def state: S0                              = t.combine(l.state, r.state)
+        def isClosed: Boolean                      = source.isClosed
+        def read[A1 >: (OL, OR)](sentinel: A1): A1 = {
+          val v = source.read[Any](EndOfStream)
+          if (v.asInstanceOf[AnyRef] eq EndOfStream) return sentinel
+          val pair = v.asInstanceOf[(InL, InR)]
+          leftQ.append(pair._1)
+          rightQ.append(pair._2)
+          val a = l.read[Any](EndOfStream)
+          if (a.asInstanceOf[AnyRef] eq EndOfStream) return sentinel
+          val b = r.read[Any](EndOfStream)
+          if (b.asInstanceOf[AnyRef] eq EndOfStream) return sentinel
+          (a.asInstanceOf[OL], b.asInstanceOf[OR]).asInstanceOf[A1]
+        }
+        def close(): Unit = {
+          var primary: Throwable = null
+          try l.close()
+          catch { case t: Throwable => primary = t }
+          try r.close()
+          catch {
+            case t: Throwable =>
+              if (primary == null) primary = t else primary.addSuppressed(t)
+          }
+          try source.close()
+          catch {
+            case t: Throwable =>
+              if (primary == null) primary = t else primary.addSuppressed(t)
+          }
+          if (primary != null) throw primary
+        }
+      }
+    }
+  }
+
+  private[scan] final class First[In, A, Out, S0](inner: Scan.Aux[In, Out, S0])
+    extends Scan[(In, A), (Out, A)] {
+    type State = S0
+    def initialState: S0                                         = inner.initialState
+    def withInitialState(s: S0): Scan.Aux[(In, A), (Out, A), S0] = new First[In, A, Out, S0](inner.withInitialState(s))
+    def render: String                                           = inner.render + ".first"
+    private[scan] def applyToReader(
+      source: Reader[(In, A)]
+    ): ScanReader[(Out, A)] { type State = S0 } = {
+      val passthrough = new scala.collection.mutable.ArrayDeque[A](4)
+      val innerSource: Reader[In] = new Reader[In] {
+        def isClosed: Boolean                = source.isClosed
+        def close(): Unit                    = source.close()
+        def read[A1 >: In](sentinel: A1): A1 =
+          if (passthrough.nonEmpty) sentinel
+          else {
+            val v = source.read[Any](EndOfStream)
+            if (v.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+            else {
+              val tup = v.asInstanceOf[(In, A)]
+              passthrough.append(tup._2)
+              tup._1.asInstanceOf[A1]
+            }
+          }
+      }
+      val rd = inner.applyToReader(innerSource)
+      new ScanReader[(Out, A)] {
+        type State                                 = S0
+        def state: S0                              = rd.state
+        def isClosed: Boolean                      = rd.isClosed && passthrough.isEmpty
+        def read[A1 >: (Out, A)](sentinel: A1): A1 = {
+          val o = rd.read[Any](EndOfStream)
+          if (o.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+          else {
+            val a = passthrough.removeHead()
+            (o.asInstanceOf[Out], a).asInstanceOf[A1]
+          }
+        }
+        def close(): Unit = rd.close()
+      }
+    }
+  }
+
+  private[scan] final class Second[In, A, Out, S0](inner: Scan.Aux[In, Out, S0])
+    extends Scan[(A, In), (A, Out)] {
+    type State = S0
+    def initialState: S0                                         = inner.initialState
+    def withInitialState(s: S0): Scan.Aux[(A, In), (A, Out), S0] = new Second[In, A, Out, S0](inner.withInitialState(s))
+    def render: String                                           = inner.render + ".second"
+    private[scan] def applyToReader(
+      source: Reader[(A, In)]
+    ): ScanReader[(A, Out)] { type State = S0 } = {
+      val passthrough = new scala.collection.mutable.ArrayDeque[A](4)
+      val innerSource: Reader[In] = new Reader[In] {
+        def isClosed: Boolean                = source.isClosed
+        def close(): Unit                    = source.close()
+        def read[A1 >: In](sentinel: A1): A1 =
+          if (passthrough.nonEmpty) sentinel
+          else {
+            val v = source.read[Any](EndOfStream)
+            if (v.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+            else {
+              val tup = v.asInstanceOf[(A, In)]
+              passthrough.append(tup._1)
+              tup._2.asInstanceOf[A1]
+            }
+          }
+      }
+      val rd = inner.applyToReader(innerSource)
+      new ScanReader[(A, Out)] {
+        type State                                 = S0
+        def state: S0                              = rd.state
+        def isClosed: Boolean                      = rd.isClosed && passthrough.isEmpty
+        def read[A1 >: (A, Out)](sentinel: A1): A1 = {
+          val o = rd.read[Any](EndOfStream)
+          if (o.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+          else {
+            val a = passthrough.removeHead()
+            (a, o.asInstanceOf[Out]).asInstanceOf[A1]
+          }
+        }
+        def close(): Unit = rd.close()
+      }
+    }
+  }
+
+  private[scan] final class Lensed[In, In2, Out, Out2, S0](
+    inner: Scan.Aux[In, Out, S0],
+    get: In2 => In,
+    set: (In2, Out) => Out2
+  ) extends Scan[In2, Out2] {
+    type State = S0
+    def initialState: S0                                = inner.initialState
+    def withInitialState(s: S0): Scan.Aux[In2, Out2, S0] =
+      new Lensed[In, In2, Out, Out2, S0](inner.withInitialState(s), get, set)
+    def render: String = inner.render + ".lens(...)"
+    private[scan] def applyToReader(
+      source: Reader[In2]
+    ): ScanReader[Out2] { type State = S0 } = {
+      val passthrough = new scala.collection.mutable.ArrayDeque[In2](4)
+      val innerSource: Reader[In] = new Reader[In] {
+        def isClosed: Boolean                = source.isClosed
+        def close(): Unit                    = source.close()
+        def read[A1 >: In](sentinel: A1): A1 =
+          if (passthrough.nonEmpty) sentinel
+          else {
+            val v = source.read[Any](EndOfStream)
+            if (v.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+            else {
+              val i2 = v.asInstanceOf[In2]
+              passthrough.append(i2)
+              get(i2).asInstanceOf[A1]
+            }
+          }
+      }
+      val rd = inner.applyToReader(innerSource)
+      new ScanReader[Out2] {
+        type State                             = S0
+        def state: S0                          = rd.state
+        def isClosed: Boolean                  = rd.isClosed && passthrough.isEmpty
+        def read[A1 >: Out2](sentinel: A1): A1 = {
+          val o = rd.read[Any](EndOfStream)
+          if (o.asInstanceOf[AnyRef] eq EndOfStream) sentinel
+          else {
+            val i2 = passthrough.removeHead()
+            set(i2, o.asInstanceOf[Out]).asInstanceOf[A1]
+          }
+        }
+        def close(): Unit = rd.close()
+      }
+    }
+  }
+
+  private[scan] final class Semilensed[In, In2, Out, Out2, S0](
+    inner: Scan.Aux[In, Out, S0],
+    extract: In2 => Either[Out2, In],
+    inject: (In2, Out) => Out2
+  ) extends Scan[In2, Out2] {
+    type State = S0
+    def initialState: S0                                = inner.initialState
+    def withInitialState(s: S0): Scan.Aux[In2, Out2, S0] =
+      new Semilensed[In, In2, Out, Out2, S0](inner.withInitialState(s), extract, inject)
+    def render: String = inner.render + ".semilens(...)"
+    private[scan] def applyToReader(
+      source: Reader[In2]
+    ): ScanReader[Out2] { type State = S0 } = {
+      val innerQueue = new scala.collection.mutable.ArrayDeque[In](4)
+      val tagQueue   = new scala.collection.mutable.ArrayDeque[In2](4)
+      val innerSource: Reader[In] = new Reader[In] {
+        def isClosed: Boolean                = source.isClosed && innerQueue.isEmpty
+        def close(): Unit                    = source.close()
+        def read[A1 >: In](sentinel: A1): A1 =
+          if (innerQueue.nonEmpty) innerQueue.removeHead().asInstanceOf[A1] else sentinel
+      }
+      val rd = inner.applyToReader(innerSource)
+      new ScanReader[Out2] {
+        type State                             = S0
+        def state: S0                          = rd.state
+        def isClosed: Boolean                  = source.isClosed
+        def read[A1 >: Out2](sentinel: A1): A1 = {
+          while (true) {
+            val v = source.read[Any](EndOfStream)
+            if (v.asInstanceOf[AnyRef] eq EndOfStream) return sentinel
+            val i2 = v.asInstanceOf[In2]
+            extract(i2) match {
+              case Left(o2) => return o2.asInstanceOf[A1]
+              case Right(i) =>
+                innerQueue.append(i)
+                tagQueue.append(i2)
+                val o = rd.read[Any](EndOfStream)
+                if (o.asInstanceOf[AnyRef] eq EndOfStream) return sentinel
+                val tag = tagQueue.removeHead()
+                return inject(tag, o.asInstanceOf[Out]).asInstanceOf[A1]
+            }
+          }
+          sentinel
+        }
+        def close(): Unit = {
+          var primary: Throwable = null
+          try rd.close()
+          catch { case t: Throwable => primary = t }
+          try source.close()
+          catch {
+            case t: Throwable =>
+              if (primary == null) primary = t else primary.addSuppressed(t)
+          }
+          if (primary != null) throw primary
         }
       }
     }
