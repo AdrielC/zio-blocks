@@ -21,12 +21,11 @@ import zio.blocks.combinators.Tuples.Tuples
 /**
  * Merges two `Scan` state types into a normalised carrier.
  *
- * `Combine` is a thin priority ladder over
- * [[zio.blocks.combinators.Tuples]]. Its sole purpose is to make
- * `Scan.lift(...) &&& Scan.lift(...)` (both stateless) compile without an
- * ambiguous-implicit error: upstream `Tuples` provides both `leftUnit` and
- * `rightUnit` at the same priority, which collide when both sides are
- * `Unit`.
+ * `Combine` is a thin priority ladder over [[zio.blocks.combinators.Tuples]].
+ * Its sole purpose is to make `Scan.lift(...) &&& Scan.lift(...)` (both
+ * stateless) compile without an ambiguous-implicit error: upstream `Tuples`
+ * provides both `leftUnit` and `rightUnit` at the same priority, which collide
+ * when both sides are `Unit`.
  *
  * Priority order:
  *   1. `unitUnit` (highest): `Combine[Unit, Unit] { type Out = Unit }`.
@@ -34,8 +33,8 @@ import zio.blocks.combinators.Tuples.Tuples
  *   3. `fromTuples` (lowest): delegate to upstream `Tuples`.
  *
  * Living in the `Scan` companion's package puts every instance in implicit
- * scope at the call site of `>>>` / `&&&` automatically — users never need
- * to import anything.
+ * scope at the call site of `>>>` / `&&&` automatically — users never need to
+ * import anything.
  */
 trait Combine[A, B] { self =>
   type Out

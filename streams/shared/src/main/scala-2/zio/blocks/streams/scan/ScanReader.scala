@@ -30,7 +30,10 @@ import zio.blocks.streams.io.Reader
  */
 private[scan] abstract class ScanReader[+Out] extends Reader[Out] { self =>
 
-  /** The state / summary type. Refinable via `ScanReader[Out] { type State = X }`. */
+  /**
+   * The state / summary type. Refinable via
+   * `ScanReader[Out] { type State = X }`.
+   */
   type State
 
   /** The current state. Stable after [[isClosed]] reports `true`. */
