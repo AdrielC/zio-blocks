@@ -52,9 +52,9 @@ object ScanInlineSpec extends StreamsBaseSpec {
       assertCompletes
     },
     test("Combine.merge resolves runtime instances for each case") {
-      val _ = summonInline[Combine.Aux[Unit, Unit, Unit]]
-      val _ = summonInline[Combine.Aux[Unit, Long, Long]]
-      val _ = summonInline[Combine.Aux[Long, Unit, Long]]
+      val _ = scala.compiletime.summonInline[Combine.Aux[Unit, Unit, Unit]]
+      val _ = scala.compiletime.summonInline[Combine.Aux[Unit, Long, Long]]
+      val _ = scala.compiletime.summonInline[Combine.Aux[Long, Unit, Long]]
       assertCompletes
     },
     test("scan.mapState(identity) short-circuits to `self` (object identity)") {
