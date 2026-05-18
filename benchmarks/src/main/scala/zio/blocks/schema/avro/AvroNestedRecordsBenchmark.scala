@@ -1,18 +1,35 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.avro
 
 import org.openjdk.jmh.annotations._
 import zio.blocks.BaseBenchmark
 import zio.blocks.schema.{Schema, SchemaError}
-import zio.blocks.schema.avro.{AvroBinaryCodec, AvroFormat}
+import zio.blocks.schema.avro.{AvroCodec, AvroFormat}
+import scala.compiletime.uninitialized
 
 class AvroNestedRecordsBenchmark extends BaseBenchmark {
   import AvroNestedRecordsBenchmark._
 
   @Param(Array("1", "10", "100"))
   var size: Int                         = 100
-  var nestedRecords: Nested             = _
-  var encodedNestedRecords: Array[Byte] = _
-  var brokenNestedRecords: Array[Byte]  = _
+  var nestedRecords: Nested             = uninitialized
+  var encodedNestedRecords: Array[Byte] = uninitialized
+  var brokenNestedRecords: Array[Byte]  = uninitialized
 
   @Setup
   def setup(): Unit = {
@@ -25,7 +42,7 @@ class AvroNestedRecordsBenchmark extends BaseBenchmark {
   @Benchmark
   def readingZioBlocks: Nested = zioBlocksCodec.decode(encodedNestedRecords) match {
     case Right(value) => value
-    case Left(error)  => sys.error(error.getMessage)
+    case Left(error)  => throw error
   }
 
   @Benchmark
@@ -38,5 +55,5 @@ class AvroNestedRecordsBenchmark extends BaseBenchmark {
 object AvroNestedRecordsBenchmark {
   case class Nested(value: Int, next: Option[Nested])
 
-  val zioBlocksCodec: AvroBinaryCodec[Nested] = Schema.derived.deriving(AvroFormat.deriver).derive
+  val zioBlocksCodec: AvroCodec[Nested] = Schema.derived.deriving(AvroFormat.deriver).derive
 }

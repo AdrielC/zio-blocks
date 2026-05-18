@@ -1,10 +1,26 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.avro
 
-import zio.blocks.schema.Schema
+import zio.blocks.schema.{Schema, SchemaBaseSpec}
 import zio.blocks.schema.avro.AvroTestUtils._
 import zio.test._
 
-object AvroFormatVersionSpecificSpec extends ZIOSpecDefault {
+object AvroFormatVersionSpecificSpec extends SchemaBaseSpec {
   def spec: Spec[TestEnvironment, Any] = suite("AvroFormatVersionSpecificSpec")(
     suite("records")(
       test("generic tuples") {
@@ -48,7 +64,7 @@ object AvroFormatVersionSpecificSpec extends ZIOSpecDefault {
         implicit val schema: Schema[Value] = Schema.derived
 
         avroSchema[Value](
-          "[\"int\",\"boolean\",\"string\",{\"type\":\"record\",\"name\":\"Tuple2\",\"namespace\":\"scala\",\"fields\":[{\"name\":\"_1\",\"type\":\"int\"},{\"name\":\"_2\",\"type\":\"boolean\"}]},{\"type\":\"array\",\"items\":\"int\"}]"
+          "[\"string\",\"boolean\",\"int\",{\"type\":\"record\",\"name\":\"Tuple2\",\"namespace\":\"scala\",\"fields\":[{\"name\":\"_1\",\"type\":\"int\"},{\"name\":\"_2\",\"type\":\"boolean\"}]},{\"type\":\"array\",\"items\":\"int\"}]"
         ) &&
         roundTrip[Value](1, 2) &&
         roundTrip[Value](true, 2) &&

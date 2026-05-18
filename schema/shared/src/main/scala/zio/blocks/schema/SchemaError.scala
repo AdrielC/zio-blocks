@@ -1,6 +1,22 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
-import scala.collection.immutable.ArraySeq
+import zio.blocks.chunk.Chunk
 import scala.util.control.NoStackTrace
 
 final case class SchemaError(errors: ::[SchemaError.Single]) extends Exception with NoStackTrace {
@@ -17,9 +33,42 @@ final case class SchemaError(errors: ::[SchemaError.Single]) extends Exception w
         sb.append(e.message)
     }
     .toString
+
+  /** Prepends a field access to the path of all errors in this SchemaError. */
+  def atField(name: String): SchemaError = mapSource(path => DynamicOptic.root.field(name)(path))
+
+  /** Prepends an index access to the path of all errors in this SchemaError. */
+  def atIndex(index: Int): SchemaError = mapSource(path => DynamicOptic.root.at(index)(path))
+
+  /** Prepends a case access to the path of all errors in this SchemaError. */
+  def atCase(name: String): SchemaError = mapSource(path => DynamicOptic.root.caseOf(name)(path))
+
+  /**
+   * Prepends a map key access to the path of all errors in this SchemaError.
+   */
+  def atKey(key: DynamicValue): SchemaError =
+    mapSource(path => new DynamicOptic(DynamicOptic.Node.AtMapKey(key) +: path.nodes))
+
+  private[this] def mapSource(f: DynamicOptic => DynamicOptic): SchemaError =
+    new SchemaError(new ::(SchemaError.remapSource(errors.head, f), errors.tail.map(SchemaError.remapSource(_, f))))
 }
 
 object SchemaError {
+  def conversionFailed(trace: List[DynamicOptic.Node], details: String): SchemaError =
+    new SchemaError(new ::(ConversionFailed(toDynamicOptic(trace), details, None), Nil))
+
+  def conversionFailed(contextMessage: String, cause: SchemaError): SchemaError =
+    new SchemaError(
+      new ::(
+        ConversionFailed(
+          DynamicOptic.root,
+          contextMessage,
+          Some(cause)
+        ),
+        Nil
+      )
+    )
+
   def expectationMismatch(trace: List[DynamicOptic.Node], expectation: String): SchemaError =
     new SchemaError(new ::(new ExpectationMismatch(toDynamicOptic(trace), expectation), Nil))
 
@@ -32,10 +81,39 @@ object SchemaError {
   def unknownCase(trace: List[DynamicOptic.Node], caseName: String): SchemaError =
     new SchemaError(new ::(new UnknownCase(toDynamicOptic(trace), caseName), Nil))
 
+  /**
+   * Creates a SchemaError from a validation failure message. Use this to
+   * convert string-based validation errors (e.g., from smart constructors) into
+   * SchemaError.
+   */
+  def validationFailed(message: String): SchemaError = conversionFailed(Nil, message)
+
+  /**
+   * Creates a SchemaError with a simple message at the given path. This is the
+   * primary replacement for JsonError(message, path) and
+   * DynamicValueError(message, path).
+   */
+  def message(details: String, path: DynamicOptic = DynamicOptic.root): SchemaError =
+    new SchemaError(new ::(Message(path, details), Nil))
+
+  /**
+   * Creates a SchemaError with just a message at the root path.
+   */
+  def apply(details: String): SchemaError = message(details)
+
+  private[schema] def remapSource(single: Single, f: DynamicOptic => DynamicOptic): Single = single match {
+    case e: ConversionFailed    => e.copy(source = f(e.source))
+    case e: MissingField        => e.copy(source = f(e.source))
+    case e: DuplicatedField     => e.copy(source = f(e.source))
+    case e: ExpectationMismatch => e.copy(source = f(e.source))
+    case e: UnknownCase         => e.copy(source = f(e.source))
+    case e: Message             => e.copy(source = f(e.source))
+  }
+
   private[this] def toDynamicOptic(trace: List[DynamicOptic.Node]): DynamicOptic = {
     val nodes = trace.toArray
     reverse(nodes)
-    new DynamicOptic(ArraySeq.unsafeWrapArray(nodes))
+    new DynamicOptic(Chunk.fromArray(nodes))
   }
 
   private[this] def reverse(nodes: Array[DynamicOptic.Node]): Unit =
@@ -57,19 +135,61 @@ object SchemaError {
     def source: DynamicOptic
   }
 
+  /** Sub-trait for Into conversion errors */
+  sealed trait IntoError extends Single {
+    def source: DynamicOptic
+  }
+
+  case class ConversionFailed(
+    source: DynamicOptic,
+    details: String,
+    cause: Option[SchemaError] = None
+  ) extends IntoError {
+    override def message: String =
+      cause match {
+        case Some(causeErr) =>
+          val sb = new java.lang.StringBuilder(details)
+          sb.append('\n')
+          if (causeErr.errors.isEmpty) sb.append("<no further details>")
+          else if (causeErr.errors.length == 1) sb.append("  Caused by: ").append(causeErr.errors.head.message)
+          else {
+            sb.append("  Caused by:\n")
+            val start = sb.length
+            causeErr.errors.foreach { e =>
+              if (sb.length > start) sb.append('\n')
+              sb.append("  - ").append(e.message)
+            }
+          }
+          sb.toString
+        case _ =>
+          if (source.nodes.isEmpty) details
+          else s"$details at: ${source.toScalaString}"
+      }
+  }
+
   case class MissingField(source: DynamicOptic, fieldName: String) extends Single {
-    override def message: String = s"Missing field '$fieldName' at: $source"
+    override def message: String = s"Missing field '$fieldName' at: ${source.toScalaString}"
   }
 
   case class DuplicatedField(source: DynamicOptic, fieldName: String) extends Single {
-    override def message: String = s"Duplicated field '$fieldName' at: $source"
+    override def message: String = s"Duplicated field '$fieldName' at: ${source.toScalaString}"
   }
 
   case class ExpectationMismatch(source: DynamicOptic, expectation: String) extends Single {
-    override def message: String = s"$expectation at: $source"
+    override def message: String = s"$expectation at: ${source.toScalaString}"
   }
 
   case class UnknownCase(source: DynamicOptic, caseName: String) extends Single {
-    override def message: String = s"Unknown case '$caseName' at: $source"
+    override def message: String = s"Unknown case '$caseName' at: ${source.toScalaString}"
+  }
+
+  /**
+   * A generic message error with a path. This is the primary replacement for
+   * JsonError and DynamicValueError.
+   */
+  case class Message(source: DynamicOptic, details: String) extends Single {
+    override def message: String =
+      if (source.nodes.isEmpty) details
+      else s"$details at: ${source.toString}"
   }
 }

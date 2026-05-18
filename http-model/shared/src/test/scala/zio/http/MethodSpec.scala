@@ -1,0 +1,151 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package zio.http
+
+import zio.test._
+
+object MethodSpec extends HttpModelBaseSpec {
+  def spec: Spec[TestEnvironment, Any] = suite("Method")(
+    suite("case objects")(
+      test("GET has correct name and ordinal") {
+        assertTrue(Method.GET.name == "GET", Method.GET.ordinal == 0)
+      },
+      test("POST has correct name and ordinal") {
+        assertTrue(Method.POST.name == "POST", Method.POST.ordinal == 1)
+      },
+      test("PUT has correct name and ordinal") {
+        assertTrue(Method.PUT.name == "PUT", Method.PUT.ordinal == 2)
+      },
+      test("DELETE has correct name and ordinal") {
+        assertTrue(Method.DELETE.name == "DELETE", Method.DELETE.ordinal == 3)
+      },
+      test("PATCH has correct name and ordinal") {
+        assertTrue(Method.PATCH.name == "PATCH", Method.PATCH.ordinal == 4)
+      },
+      test("HEAD has correct name and ordinal") {
+        assertTrue(Method.HEAD.name == "HEAD", Method.HEAD.ordinal == 5)
+      },
+      test("OPTIONS has correct name and ordinal") {
+        assertTrue(Method.OPTIONS.name == "OPTIONS", Method.OPTIONS.ordinal == 6)
+      },
+      test("TRACE has correct name and ordinal") {
+        assertTrue(Method.TRACE.name == "TRACE", Method.TRACE.ordinal == 7)
+      },
+      test("CONNECT has correct name and ordinal") {
+        assertTrue(Method.CONNECT.name == "CONNECT", Method.CONNECT.ordinal == 8)
+      }
+    ),
+    suite("ordinals")(
+      test("ordinal values are unique and dense (0-8)") {
+        val ordinals = Method.values.map(_.ordinal).toSet
+        assertTrue(ordinals == Set(0, 1, 2, 3, 4, 5, 6, 7, 8))
+      }
+    ),
+    suite("values")(
+      test("contains all 9 methods") {
+        assertTrue(Method.values.length == 9)
+      },
+      test("values are indexed by ordinal") {
+        assertTrue(
+          Method.values.zipWithIndex.forall { case (m, i) => m.ordinal == i }
+        )
+      }
+    ),
+    suite("fromString")(
+      test("returns Some for valid method name") {
+        assertTrue(Method.fromString("GET") == Some(Method.GET))
+      },
+      test("returns None for unknown method") {
+        assertTrue(Method.fromString("UNKNOWN") == None)
+      },
+      test("is case-sensitive") {
+        assertTrue(Method.fromString("get") == None)
+      },
+      test("resolves all methods") {
+        assertTrue(
+          Method.fromString("GET") == Some(Method.GET),
+          Method.fromString("POST") == Some(Method.POST),
+          Method.fromString("PUT") == Some(Method.PUT),
+          Method.fromString("DELETE") == Some(Method.DELETE),
+          Method.fromString("PATCH") == Some(Method.PATCH),
+          Method.fromString("HEAD") == Some(Method.HEAD),
+          Method.fromString("OPTIONS") == Some(Method.OPTIONS),
+          Method.fromString("TRACE") == Some(Method.TRACE),
+          Method.fromString("CONNECT") == Some(Method.CONNECT)
+        )
+      }
+    ),
+    suite("render")(
+      test("returns the method name") {
+        assertTrue(
+          Method.render(Method.GET) == "GET",
+          Method.render(Method.POST) == "POST",
+          Method.render(Method.DELETE) == "DELETE"
+        )
+      }
+    ),
+    suite("toString")(
+      test("returns the method name") {
+        assertTrue(
+          Method.GET.toString == "GET",
+          Method.POST.toString == "POST",
+          Method.DELETE.toString == "DELETE"
+        )
+      }
+    ),
+    suite("matches")(
+      test("ANY matches every standard method") {
+        assertTrue(
+          Method.ANY.matches(Method.GET),
+          Method.GET.matches(Method.ANY),
+          Method.ANY.matches(Method.POST)
+        )
+      },
+      test("combined methods match any constituent method") {
+        val combined = Method.GET #| Method.POST
+        assertTrue(
+          combined.matches(Method.GET),
+          combined.matches(Method.POST),
+          !combined.matches(Method.DELETE)
+        )
+      }
+    ),
+    suite("#|")(
+      test("combines distinct methods into Methods") {
+        val combined = Method.GET #| Method.POST
+        assertTrue(combined == Method.Methods(Set(Method.GET, Method.POST)))
+      },
+      test("returns ANY when either side is ANY") {
+        assertTrue(
+          (Method.ANY #| Method.GET) == Method.ANY,
+          (Method.GET #| Method.ANY) == Method.ANY
+        )
+      },
+      test("deduplicates repeated methods") {
+        assertTrue((Method.GET #| Method.GET) == Method.GET)
+      }
+    ),
+    suite("special methods")(
+      test("render formats ANY as wildcard") {
+        assertTrue(Method.render(Method.ANY) == "*")
+      },
+      test("standardMethods contains all 9 standard methods") {
+        assertTrue(Method.standardMethods == Method.values.iterator.toSet)
+      }
+    )
+  )
+}

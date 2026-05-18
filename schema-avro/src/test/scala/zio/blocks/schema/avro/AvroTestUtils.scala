@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.avro
 
 import org.apache.avro.generic.{GenericDatumReader, GenericDatumWriter}
@@ -13,25 +29,27 @@ import java.util.concurrent.ConcurrentHashMap
 import scala.collection.immutable.ArraySeq
 
 object AvroTestUtils {
-  private[this] val codecs = new ConcurrentHashMap[Schema[?], AvroBinaryCodec[?]]()
+  private[this] val codecs = new ConcurrentHashMap[Schema[?], AvroCodec[?]]()
 
-  private[this] def codec[A](schema: Schema[A]): AvroBinaryCodec[A] =
-    codecs.computeIfAbsent(schema, _.derive(AvroFormat.deriver)).asInstanceOf[AvroBinaryCodec[A]]
+  private[this] def codec[A](schema: Schema[A]): AvroCodec[A] =
+    codecs
+      .computeIfAbsent(schema, (s: Schema[?]) => s.deriving(AvroFormat.deriver).derive)
+      .asInstanceOf[AvroCodec[A]]
 
   def avroSchema[A](expectedAvroSchemaJson: String)(implicit schema: Schema[A]): TestResult =
     avroSchema(expectedAvroSchemaJson, codec(schema))
 
-  def avroSchema[A](expectedAvroSchemaJson: String, codec: AvroBinaryCodec[A]): TestResult =
+  def avroSchema[A](expectedAvroSchemaJson: String, codec: AvroCodec[A]): TestResult =
     assert(codec.avroSchema.toString)(equalTo(expectedAvroSchemaJson))
 
   def roundTrip[A](value: A, expectedLength: Int)(implicit schema: Schema[A]): TestResult =
     roundTrip(value, expectedLength, codec(schema))
 
-  def roundTrip[A](value: A, expectedLength: Int, codec: AvroBinaryCodec[A]): TestResult = {
+  def roundTrip[A](value: A, expectedLength: Int, codec: AvroCodec[A]): TestResult = {
     val heapByteBuffer = ByteBuffer.allocate(maxBufSize)
     codec.encode(value, heapByteBuffer)
     val encodedBySchema1 = util.Arrays.copyOf(heapByteBuffer.array, heapByteBuffer.position)
-    val directByteBuffer = ByteBuffer.allocate(maxBufSize)
+    val directByteBuffer = ByteBuffer.allocateDirect(maxBufSize)
     codec.encode(value, directByteBuffer)
     val encodedBySchema2 = util.Arrays.copyOf(
       {
@@ -69,7 +87,7 @@ object AvroTestUtils {
   def decodeError[A](bytes: Array[Byte], error: String)(implicit schema: Schema[A]): TestResult =
     decodeError(bytes, codec(schema), error)
 
-  def decodeError[A](bytes: Array[Byte], codec: AvroBinaryCodec[A], error: String): TestResult =
+  def decodeError[A](bytes: Array[Byte], codec: AvroCodec[A], error: String): TestResult =
     assert(codec.decode(bytes))(isLeft(hasError(error))) &&
       assert(codec.decode(toInputStream(bytes)))(isLeft(hasError(error))) &&
       assert(codec.decode(toHeapByteBuffer(bytes)))(isLeft(hasError(error))) &&

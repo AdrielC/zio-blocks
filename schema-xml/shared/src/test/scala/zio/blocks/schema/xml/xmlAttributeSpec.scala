@@ -1,0 +1,143 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package zio.blocks.schema.xml
+
+import zio.blocks.schema.{Modifier, Schema, SchemaBaseSpec}
+import zio.test._
+
+object xmlAttributeSpec extends SchemaBaseSpec {
+  def spec: Spec[TestEnvironment, Any] = suite("xmlAttributeSpec")(
+    test("simple case class with xml attributes") {
+      case class Person(
+        @Modifier.config("xml.attribute", "") id: String,
+        @Modifier.config("xml.attribute", "") age: Int,
+        name: String
+      )
+      object Person {
+        implicit val schema: Schema[Person] = Schema.derived
+      }
+
+      val person = Person("123", 30, "John")
+      val codec  = Schema[Person].derive(XmlFormat)
+      val xml    = codec.encodeToString(person)
+
+      assertTrue(xml == "<Person id=\"123\" age=\"30\"><name>John</name></Person>")
+    },
+    test("round-trip with xml attributes") {
+      case class Book(
+        @Modifier.config("xml.attribute", "") id: String,
+        @Modifier.config("xml.attribute", "") year: Int,
+        title: String,
+        author: String
+      )
+      object Book {
+        implicit val schema: Schema[Book] = Schema.derived
+      }
+
+      val book   = Book("B123", 2024, "ZIO Blocks", "ZIO Team")
+      val codec  = Schema[Book].derive(XmlFormat)
+      val result = codec.decode(codec.encode(book))
+
+      assertTrue(result == Right(book))
+    },
+    test("custom attribute name") {
+      case class Product(
+        @Modifier.config("xml.attribute", "product-id") id: String,
+        @Modifier.config("xml.attribute", "product-code") code: Int,
+        name: String
+      )
+      object Product {
+        implicit val schema: Schema[Product] = Schema.derived
+      }
+
+      val product = Product("P456", 789, "Widget")
+      val codec   = Schema[Product].derive(XmlFormat)
+      val xml     = codec.encodeToString(product)
+
+      assertTrue(xml == "<Product product-id=\"P456\" product-code=\"789\"><name>Widget</name></Product>")
+    },
+    test("round-trip with custom attribute names") {
+      case class Item(
+        @Modifier.config("xml.attribute", "item-id") id: String,
+        @Modifier.config("xml.attribute", "stock") quantity: Int,
+        description: String
+      )
+      object Item {
+        implicit val schema: Schema[Item] = Schema.derived
+      }
+
+      val item   = Item("I999", 50, "Test Item")
+      val codec  = Schema[Item].derive(XmlFormat)
+      val result = codec.decode(codec.encode(item))
+
+      assertTrue(result == Right(item))
+    },
+    test("mixed attributes and child elements") {
+      case class Document(
+        @Modifier.config("xml.attribute", "") version: String,
+        @Modifier.config("xml.attribute", "") encoding: String,
+        title: String,
+        content: String,
+        @Modifier.config("xml.attribute", "") author: String
+      )
+      object Document {
+        implicit val schema: Schema[Document] = Schema.derived
+      }
+
+      val doc    = Document("1.0", "UTF-8", "My Doc", "Content here", "Author")
+      val codec  = Schema[Document].derive(XmlFormat)
+      val xml    = codec.encodeToString(doc)
+      val result = codec.decode(xml)
+
+      assertTrue(result == Right(doc)) &&
+      assertTrue(
+        xml == "<Document version=\"1.0\" encoding=\"UTF-8\" author=\"Author\"><title>My Doc</title><content>Content here</content></Document>"
+      )
+    },
+    test("all primitive types as attributes") {
+      case class AllTypes(
+        @Modifier.config("xml.attribute", "") str: String,
+        @Modifier.config("xml.attribute", "") num: Int,
+        @Modifier.config("xml.attribute", "") lng: Long,
+        @Modifier.config("xml.attribute", "") dbl: Double,
+        @Modifier.config("xml.attribute", "") bool: Boolean,
+        name: String
+      )
+      object AllTypes {
+        implicit val schema: Schema[AllTypes] = Schema.derived
+      }
+
+      val value  = AllTypes("test", 42, 9876543210L, 3.14, true, "Name")
+      val codec  = Schema[AllTypes].derive(XmlFormat)
+      val result = codec.decode(codec.encode(value))
+
+      assertTrue(result == Right(value))
+    },
+    test("decode from manually created XML with attributes") {
+      case class Simple(@Modifier.config("xml.attribute", "") id: String, name: String)
+      object Simple {
+        implicit val schema: Schema[Simple] = Schema.derived
+      }
+
+      val xml    = """<Simple id="S123"><name>Test</name></Simple>"""
+      val codec  = Schema[Simple].derive(XmlFormat)
+      val result = codec.decode(xml)
+
+      assertTrue(result == Right(Simple("S123", "Test")))
+    }
+  )
+}

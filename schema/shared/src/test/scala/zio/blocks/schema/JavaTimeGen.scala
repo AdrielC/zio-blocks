@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
 import zio.test.Gen
@@ -68,10 +84,12 @@ object JavaTimeGen {
     month <- Gen.int
     day   <- Gen.int
   } yield Period.of(year, month, day)
+  // Note: genYear produces years outside the 4-digit range,
+  // YearMonth.parse() only handles 4-digit years. Using constrained year range here.
   val genYearMonth: Gen[Any, YearMonth] = for {
-    year  <- genYear
+    year  <- Gen.int(-9999, 9999)
     month <- Gen.int(1, 12)
-  } yield YearMonth.of(year.getValue, month)
+  } yield YearMonth.of(year, month)
   val genZoneId: Gen[Any, ZoneId] = Gen.oneOf(
     genZoneOffset,
     genZoneOffset.map(zo => ZoneId.of(zo.toString.replace(":", ""))),

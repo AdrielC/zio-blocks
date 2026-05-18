@@ -1,5 +1,22 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
+import java.lang
 import scala.util.control.NoStackTrace
 
 final case class OpticCheck(errors: ::[OpticCheck.Single]) extends Exception with NoStackTrace {
@@ -9,7 +26,14 @@ final case class OpticCheck(errors: ::[OpticCheck.Single]) extends Exception wit
 
   def hasError: Boolean = errors.exists(_.isError)
 
-  def message: String = errors.map(_.message).mkString("\n")
+  def message: String = {
+    val sb = new lang.StringBuilder
+    errors.foreach { e =>
+      if (sb.length > 0) sb.append('\n')
+      sb.append(e.message)
+    }
+    sb.toString
+  }
 
   override def getMessage: String = message
 }
@@ -42,28 +66,31 @@ object OpticCheck {
     actualValue: Any
   ) extends Error {
     def message: String =
-      s"During attempted access at $full, encountered an unexpected case at $prefix: expected $expectedCase, but got $actualCase"
+      s"During attempted access at ${full.toScalaString}, encountered an unexpected case at ${prefix.toScalaString}: expected $expectedCase, but got $actualCase"
   }
 
   case class EmptySequence(full: DynamicOptic, prefix: DynamicOptic) extends Warning {
     def message: String =
-      s"During attempted access at $full, encountered an empty sequence at $prefix"
+      s"During attempted access at ${full.toScalaString}, encountered an empty sequence at ${prefix.toScalaString}"
   }
 
   case class SequenceIndexOutOfBounds(full: DynamicOptic, prefix: DynamicOptic, index: Int, size: Int) extends Warning {
     def message: String =
-      s"During attempted access at $full, encountered a sequence out of bounds at $prefix: index is $index, but size is $size"
+      s"During attempted access at ${full.toScalaString}, encountered a sequence out of bounds at ${prefix.toScalaString}: index is $index, but size is $size"
   }
 
   case class MissingKey(full: DynamicOptic, prefix: DynamicOptic, key: Any) extends Warning {
-    def message: String = s"During attempted access at $full, encountered missing key at $prefix"
+    def message: String =
+      s"During attempted access at ${full.toScalaString}, encountered missing key at ${prefix.toScalaString}"
   }
 
   case class EmptyMap(full: DynamicOptic, prefix: DynamicOptic) extends Warning {
-    def message: String = s"During attempted access at $full, encountered an empty map at $prefix"
+    def message: String =
+      s"During attempted access at ${full.toScalaString}, encountered an empty map at ${prefix.toScalaString}"
   }
 
-  case class WrappingError(full: DynamicOptic, prefix: DynamicOptic, error: String) extends Error {
-    def message: String = s"During attempted access at $full, encountered an error at $prefix: $error"
+  case class WrappingError(full: DynamicOptic, prefix: DynamicOptic, error: SchemaError) extends Error {
+    def message: String =
+      s"During attempted access at ${full.toScalaString}, encountered an error at ${prefix.toScalaString}: ${error.message}"
   }
 }

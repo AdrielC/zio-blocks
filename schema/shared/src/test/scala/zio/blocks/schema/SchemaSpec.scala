@@ -1,19 +1,39 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
-import zio.Chunk
+import zio.blocks.chunk.{Chunk, ChunkMap}
+import zio.blocks.docs.{Doc, Paragraph, Inline}
 import zio.blocks.schema.DynamicOptic.Node.{AtIndex, AtMapKey, Elements, MapValues}
 import zio.blocks.schema.Reflect.Primitive
 import zio.blocks.schema.SchemaError.{ExpectationMismatch, MissingField}
 import zio.blocks.schema.binding._
 import zio.blocks.schema.codec.{TextCodec, TextFormat}
 import zio.blocks.schema.derive.Deriver
+import zio.blocks.typeid.TypeId
 import zio.test._
 import zio.test.Assertion._
-import zio.test.TestAspect._
 import java.nio.CharBuffer
 import scala.collection.immutable.ArraySeq
 
-object SchemaSpec extends ZIOSpecDefault {
+object SchemaSpec extends SchemaBaseSpec {
+
+  private def textDoc(s: String): Doc =
+    Doc(Chunk.single(Paragraph(Chunk.single(Inline.Text(s)))))
   def spec: Spec[TestEnvironment, Any] = suite("SchemaSpec")(
     suite("Reflect.Primitive")(
       test("has consistent equals and hashCode") {
@@ -32,8 +52,8 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(Schema[Int].defaultValue(1).getDefaultValue)(isSome(equalTo(1)))
       },
       test("gets and updates primitive documentation") {
-        assert(Schema[Long].doc)(equalTo(Doc.Empty)) &&
-        assert(Schema[Int].doc("Int (updated)").doc)(equalTo(Doc("Int (updated)")))
+        assert(Schema[Long].doc)(equalTo(Doc.empty)) &&
+        assert(Schema[Int].doc("Int (updated)").doc)(equalTo(textDoc("Int (updated)")))
       },
       test("gets and updates primitive examples") {
         assert(Schema[Int].examples)(equalTo(Nil)) &&
@@ -49,12 +69,16 @@ object SchemaSpec extends ZIOSpecDefault {
       },
       test("has consistent toDynamicValue and fromDynamicValue") {
         assert(Schema[Byte].fromDynamicValue(Schema[Byte].toDynamicValue(1)))(isRight(equalTo(1: Byte))) &&
-        assert(Schema[Byte].fromDynamicValue(DynamicValue.Primitive(PrimitiveValue.Int(1))))(
+        assert(Schema[Byte].fromDynamicValue(DynamicValue.Primitive(PrimitiveValue.String("1"))))(
           isLeft(hasError("Expected Byte at: ."))
         )
       },
       test("encodes values using provided formats and outputs") {
         assert(encodeToString(out => Schema[Byte].encode(ToStringFormat)(out)(1: Byte)))(equalTo("1"))
+      },
+      test("derives codec from format directly") {
+        val codec = Schema[Int].derive(ToStringFormat)
+        assert(encodeToString(out => codec.encode(42, out)))(equalTo("42"))
       }
     ),
     suite("Reflect.Record")(
@@ -72,8 +96,8 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(Record.schema.defaultValue(Record(1, 2)).getDefaultValue)(isSome(equalTo(Record(1, 2))))
       },
       test("gets and updates record documentation") {
-        assert(Record.schema.doc)(equalTo(Doc.Empty)) &&
-        assert(Record.schema.doc("Record (updated)").doc)(equalTo(Doc("Record (updated)")))
+        assert(Record.schema.doc)(equalTo(Doc.empty)) &&
+        assert(Record.schema.doc("Record (updated)").doc)(equalTo(textDoc("Record (updated)")))
       },
       test("gets and updates record examples") {
         assert(Record.schema.examples)(equalTo(Nil)) &&
@@ -85,9 +109,9 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(Record.schema.defaultValue(Record.x, true).getDefaultValue(Record.x))(isNone) // invalid lens
       },
       test("gets and updates documentation of record fields using optic focus") {
-        assert(Record.schema.doc(Record.b, "b").doc(Record.b))(equalTo(Doc("b"))) &&
-        assert(Record.schema.doc(Record.i, "i").doc(Record.i))(equalTo(Doc("i"))) &&
-        assert(Record.schema.doc(Record.x, "x").doc(Record.x))(equalTo(Doc.Empty)) // invalid lens
+        assert(Record.schema.doc(Record.b, "b").doc(Record.b))(equalTo(textDoc("b"))) &&
+        assert(Record.schema.doc(Record.i, "i").doc(Record.i))(equalTo(textDoc("i"))) &&
+        assert(Record.schema.doc(Record.x, "x").doc(Record.x))(equalTo(Doc.empty)) // invalid lens
       },
       test("gets and updates examples of record fields using optic focus") {
         assert(Record.schema.examples(Record.b, 2: Byte).examples(Record.b))(equalTo(Seq(2: Byte))) &&
@@ -114,13 +138,13 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(
           Record.schema.fromDynamicValue(
             DynamicValue.Record(
-              Vector(
+              Chunk(
                 ("i", DynamicValue.Primitive(PrimitiveValue.Long(1000))),
                 ("i", DynamicValue.Primitive(PrimitiveValue.Int(2000)))
               )
             )
           )
-        )(isLeft(hasError("Expected Int at: .i\nDuplicated field 'i' at: .\nMissing field 'b' at: .")))
+        )(isLeft(hasError("Duplicated field 'i' at: .\nMissing field 'b' at: .")))
       },
       test("has consistent gets for typed and dynamic optics") {
         assert(Record.schema.get(Record.b.toDynamic))(equalTo(Record.schema.get(Record.b))) &&
@@ -162,11 +186,7 @@ object SchemaSpec extends ZIOSpecDefault {
                   Schema[Int].reflect.asTerm("_3"),
                   Schema[Long].reflect.asTerm("_4")
                 ),
-                typeName = TypeName(
-                  namespace = Namespace(Seq("scala")),
-                  name = "Tuple4",
-                  params = Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
-                ),
+                typeId = zio.blocks.typeid.TypeId.of[(Byte, Short, Int, Long)],
                 recordBinding = null
               )
             )
@@ -219,10 +239,7 @@ object SchemaSpec extends ZIOSpecDefault {
                     ),
                   Schema[Float].reflect.asTerm("f-2").copy(modifiers = Seq(Modifier.transient()))
                 ),
-                typeName = TypeName(
-                  namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec", "spec")),
-                  name = "Record-1"
-                ),
+                typeId = zio.blocks.typeid.TypeId.of[Record1],
                 recordBinding = null,
                 modifiers = Seq(
                   Modifier.config("record-key", "record-value-1"),
@@ -234,7 +251,7 @@ object SchemaSpec extends ZIOSpecDefault {
         )
       },
       test("derives schema for generic record using a macro call") {
-        case class `Record-2`[B, I](b: B, i: I = null.asInstanceOf[I])
+        case class `Record-2`[B, I](b: B, i: I)
 
         type Record2[B, I] = `Record-2`[B, I]
         type `i-8`         = Byte
@@ -250,7 +267,7 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(record.map(_.constructor.usedRegisters))(isSome(equalTo(RegisterOffset(bytes = 1, ints = 1)))) &&
         assert(record.map(_.deconstructor.usedRegisters))(isSome(equalTo(RegisterOffset(bytes = 1, ints = 1)))) &&
         assert(`Record-2`.b.focus.getDefaultValue)(isNone) &&
-        assert(`Record-2`.i.focus.getDefaultValue.isDefined)(equalTo(true)) &&
+        assert(`Record-2`.i.focus.getDefaultValue)(isNone) &&
         assert(`Record-2`.b.get(`Record-2`[`i-8`, `i-32`](1, 2)))(equalTo(1: Byte)) &&
         assert(`Record-2`.i.get(`Record-2`[`i-8`, `i-32`](1, 2)))(equalTo(2)) &&
         assert(`Record-2`.b.replace(`Record-2`[`i-8`, `i-32`](1, 2), 3: Byte))(
@@ -268,17 +285,13 @@ object SchemaSpec extends ZIOSpecDefault {
                   Schema[Byte].reflect.asTerm("b"),
                   Schema[Int].reflect.asTerm("i")
                 ),
-                typeName = TypeName(
-                  namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec", "spec")),
-                  name = "Record-2",
-                  params = Seq(TypeName.byte, TypeName.int)
-                ),
+                typeId = TypeId.of[`Record-2`[Byte, Int]],
                 recordBinding = null
               )
             )
           )
         )
-      } @@ jvmOnly, // FIXME: ClassCastException and NullPointerException in Scala.js and Scala Native accordingly
+      },
       test("derives schema for record with multi list constructor using a macro call") {
         case class Record3(s: Short = 0: Short)(val l: Long)
 
@@ -308,10 +321,7 @@ object SchemaSpec extends ZIOSpecDefault {
                   Schema[Short].reflect.asTerm("s"),
                   Schema[Long].reflect.asTerm("l")
                 ),
-                typeName = TypeName(
-                  namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec", "spec")),
-                  name = "Record3"
-                ),
+                typeId = zio.blocks.typeid.TypeId.of[Record3],
                 recordBinding = null
               )
             )
@@ -322,9 +332,10 @@ object SchemaSpec extends ZIOSpecDefault {
         case class Record4(mx: Vector[ArraySeq[Int]], rs: List[Set[Int]])
 
         object Record4 extends CompanionOptics[Record4] {
-          implicit val schema: Schema[Record4] = Schema.derived
-          val mx: Traversal[Record4, Int]      = optic((x: Record4) => x.mx).vectorValues.arraySeqValues
-          val rs: Traversal[Record4, Int]      = optic(_.rs).listValues.setValues
+          implicit val schema: Schema[Record4]     = Schema.derived
+          val v: Traversal[Record4, ArraySeq[Int]] = optic(_.mx).vectorValues
+          val mx: Traversal[Record4, Int]          = optic((x: Record4) => x.mx.each.each)
+          val rs: Traversal[Record4, Int]          = optic(_.rs).listValues.setValues
         }
 
         val record = Record4.schema.reflect.asRecord
@@ -353,13 +364,10 @@ object SchemaSpec extends ZIOSpecDefault {
             new Schema[Record4](
               reflect = Reflect.Record[Binding, Record4](
                 fields = Vector(
-                  Schema[Vector[ArraySeq[Int]]].reflect.asTerm("mx"),
+                  Schema.derived[Vector[ArraySeq[Int]]].reflect.asTerm("mx"),
                   Schema[List[Set[Int]]].reflect.asTerm("rs")
                 ),
-                typeName = TypeName(
-                  namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec", "spec")),
-                  name = "Record4"
-                ),
+                typeId = zio.blocks.typeid.TypeId.of[Record4],
                 recordBinding = null
               )
             )
@@ -420,10 +428,7 @@ object SchemaSpec extends ZIOSpecDefault {
                   Schema[Unit].reflect.asTerm("u"),
                   Schema[Seq[Unit]].reflect.asTerm("su")
                 ),
-                typeName = TypeName(
-                  namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec", "spec")),
-                  name = "Record5"
-                ),
+                typeId = zio.blocks.typeid.TypeId.of[Record5],
                 recordBinding = null
               )
             )
@@ -559,10 +564,7 @@ object SchemaSpec extends ZIOSpecDefault {
                   Schema[Option[DynamicValue]].reflect.asTerm("od"),
                   Schema[IndexedSeq[DynamicValue]].reflect.asTerm("isd")
                 ),
-                typeName = TypeName(
-                  namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec", "spec")),
-                  name = "Record7"
-                ),
+                typeId = zio.blocks.typeid.TypeId.of[Record7],
                 recordBinding = null
               )
             )
@@ -577,15 +579,9 @@ object SchemaSpec extends ZIOSpecDefault {
         val value  = Record8[Option](Some(1), Some(Record8[Option](Some(2), None)))
         assert(record.map(_.constructor.usedRegisters))(isSome(equalTo(RegisterOffset(objects = 2)))) &&
         assert(record.map(_.deconstructor.usedRegisters))(isSome(equalTo(RegisterOffset(objects = 2)))) &&
-        assert(record.map(_.typeName))(
+        assert(record.map(_.typeId))(
           isSome(
-            equalTo(
-              TypeName[Record8[Option]](
-                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec", "spec")),
-                name = "Record8",
-                params = Seq(TypeName(Namespace.scala, "Option"))
-              )
-            )
+            equalTo(zio.blocks.typeid.TypeId.of[Record8[Option]])
           )
         ) &&
         assert(schema.fromDynamicValue(schema.toDynamicValue(value)))(isRight(equalTo(value)))
@@ -686,17 +682,7 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(Record24.s24.get(value))(equalTo("24")) &&
         assert(Record24.schema.fromDynamicValue(Record24.schema.toDynamicValue(value)))(isRight(equalTo(value)))
       },
-      test("derives schema for record with fields that have 3rd party collection type") {
-        implicit def chunkSchema[V](implicit ev: Schema[V]): Schema[Chunk[V]] =
-          new Schema(
-            new Reflect.Wrapper[Binding, Chunk[V], List[V]](
-              Schema.list[V].reflect,
-              TypeName(Namespace(Seq("zio")), "Chunk"),
-              None,
-              new Binding.Wrapper(x => new Right(Chunk.fromIterable(x)), _.toList)
-            )
-          )
-
+      test("derives schema for record with fields that have chunk collection type") {
         case class Test(chunk: Chunk[Int])
 
         val schema = Schema.derived[Test]
@@ -768,7 +754,8 @@ object SchemaSpec extends ZIOSpecDefault {
               ) || // Scala 2
                 containsString(
                   "Type Mismatch"
-                ) // Scala 3
+                ) ||                                                    // Scala 3.3
+                (containsString("Found") && containsString("Required")) // Scala 3.5+
             )
           )
         )
@@ -793,8 +780,8 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(Variant.schema.defaultValue(Case1('1')).getDefaultValue)(isSome(equalTo(Case1('1'))))
       },
       test("gets and updates variant documentation") {
-        assert(Variant.schema.doc)(equalTo(Doc.Empty)) &&
-        assert(Variant.schema.doc("Variant (updated)").doc)(equalTo(Doc("Variant (updated)")))
+        assert(Variant.schema.doc)(equalTo(Doc.empty)) &&
+        assert(Variant.schema.doc("Variant (updated)").doc)(equalTo(textDoc("Variant (updated)")))
       },
       test("gets and updates variant examples") {
         assert(Variant.schema.examples)(equalTo(Nil)) &&
@@ -809,8 +796,8 @@ object SchemaSpec extends ZIOSpecDefault {
         )
       },
       test("gets and updates documentation of variant cases using optic focus") {
-        assert(Variant.schema.doc(Variant.case1, "Case1").doc(Variant.case1))(equalTo(Doc("Case1"))) &&
-        assert(Variant.schema.doc(Variant.case2, "Case2").doc(Variant.case2))(equalTo(Doc("Case2")))
+        assert(Variant.schema.doc(Variant.case1, "Case1").doc(Variant.case1))(equalTo(textDoc("Case1"))) &&
+        assert(Variant.schema.doc(Variant.case2, "Case2").doc(Variant.case2))(equalTo(textDoc("Case2")))
       },
       test("gets and updates examples of variant cases using optic focus") {
         assert(Variant.schema.examples(Variant.case1, Case1('1')).examples(Variant.case1))(equalTo(Seq(Case1('1')))) &&
@@ -842,7 +829,7 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(
           Variant.schema.fromDynamicValue(
             DynamicValue
-              .Variant("Case2", DynamicValue.Record(Vector(("s", DynamicValue.Primitive(PrimitiveValue.Int(1))))))
+              .Variant("Case2", DynamicValue.Record(Chunk(("s", DynamicValue.Primitive(PrimitiveValue.Int(1))))))
           )
         )(
           isLeft(hasError("Expected String at: .when[Case2].s"))
@@ -938,15 +925,8 @@ object SchemaSpec extends ZIOSpecDefault {
           isRight(equalTo(`Case-3`))
         ) &&
         assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("Case-1", "Case-2", "Case-3")))) &&
-        assert(variant.map(_.typeName))(
-          isSome(
-            equalTo(
-              TypeName[`Variant-1`](
-                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec", "spec")),
-                name = "Variant-1"
-              )
-            )
-          )
+        assert(variant.map(_.typeId))(
+          isSome(equalTo(zio.blocks.typeid.TypeId.of[`Variant-1`]))
         ) &&
         assert(variant.map(_.modifiers))(
           isSome(
@@ -994,16 +974,8 @@ object SchemaSpec extends ZIOSpecDefault {
           isRight(equalTo(Value[String]("WWW")))
         ) &&
         assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("MissingValue", "NullValue", "Value")))) &&
-        assert(variant.map(_.typeName))(
-          isSome(
-            equalTo(
-              TypeName[`Variant-2`[String]](
-                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec", "spec")),
-                name = "Variant-2",
-                params = Seq(TypeName.string)
-              )
-            )
-          )
+        assert(variant.map(_.typeId))(
+          isSome(equalTo(zio.blocks.typeid.TypeId.of[`Variant-2`[String]]))
         )
       },
       test("derives schema for options") {
@@ -1048,23 +1020,16 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(schema1.fromDynamicValue(schema1.toDynamicValue(B.A1)))(isRight(equalTo(B.A1))) &&
         assert(schema1.fromDynamicValue(schema1.toDynamicValue(B.A2)))(isRight(equalTo(B.A2))) &&
         assert(variant1.map(_.cases.map(_.name)))(isSome(equalTo(Vector("A1", "A2")))) &&
-        assert(variant1.map(_.typeName))(
-          isSome(equalTo(TypeName[A](Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec")), "A")))
+        assert(variant1.map(_.typeId))(
+          isSome(equalTo(zio.blocks.typeid.TypeId.of[A]))
         ) &&
         assert(Level1_MultiLevel.c.getOption(Case))(isSome(equalTo(Case))) &&
         assert(Level1_MultiLevel.l1_c.getOption(Level1.Case))(isSome(equalTo(Level1.Case))) &&
         assert(schema2.fromDynamicValue(schema2.toDynamicValue(Case)))(isRight(equalTo(Case))) &&
         assert(schema2.fromDynamicValue(schema2.toDynamicValue(Level1.Case)))(isRight(equalTo(Level1.Case))) &&
         assert(variant2.map(_.cases.map(_.name)))(isSome(equalTo(Vector("Level1.Case", "Case")))) &&
-        assert(variant2.map(_.typeName))(
-          isSome(
-            equalTo(
-              TypeName[Level1.MultiLevel](
-                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec", "Level1")),
-                name = "MultiLevel"
-              )
-            )
-          )
+        assert(variant2.map(_.typeId))(
+          isSome(equalTo(zio.blocks.typeid.TypeId.of[Level1.MultiLevel]))
         )
       },
       test("derives schema for higher-kinded variant using a macro call") {
@@ -1094,16 +1059,8 @@ object SchemaSpec extends ZIOSpecDefault {
           isRight(equalTo(`Case-2`[Option](None)))
         ) &&
         assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("Case-1", "Case-2")))) &&
-        assert(variant.map(_.typeName))(
-          isSome(
-            equalTo(
-              TypeName[`Variant-3`[Option]](
-                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec", "spec")),
-                name = "Variant-3",
-                params = Seq(TypeName(Namespace.scala, "Option"))
-              )
-            )
-          )
+        assert(variant.map(_.typeId))(
+          isSome(equalTo(zio.blocks.typeid.TypeId.of[`Variant-3`[Option]]))
         )
       },
       test("derives schema for genetic variant with 'Nothing' type parameter using a macro call") {
@@ -1120,16 +1077,8 @@ object SchemaSpec extends ZIOSpecDefault {
         val schema  = Schema.derived[Variant4[String, Int]]
         val variant = schema.reflect.asVariant
         assert(variant.map(_.cases.map(_.name)))(isSome(equalTo(Vector("Error", "Fatal", "Success", "Timeout")))) &&
-        assert(variant.map(_.typeName))(
-          isSome(
-            equalTo(
-              TypeName[Variant4[String, Int]](
-                namespace = Namespace(Seq("zio", "blocks", "schema"), Seq("SchemaSpec", "spec")),
-                name = "Variant4",
-                params = Seq(TypeName.string, TypeName.int)
-              )
-            )
-          )
+        assert(variant.map(_.typeId))(
+          isSome(equalTo(zio.blocks.typeid.TypeId.of[Variant4[String, Int]]))
         ) &&
         assert(schema.fromDynamicValue(schema.toDynamicValue(Error[String]("error"))))(
           isRight(equalTo(Error[String]("error")))
@@ -1197,8 +1146,8 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(Schema[Vector[Int]].defaultValue(Vector.empty).getDefaultValue)(isSome(equalTo(Vector.empty)))
       },
       test("gets and updates sequence documentation") {
-        assert(Schema[List[Double]].doc)(equalTo(Doc.Empty)) &&
-        assert(Schema[ArraySeq[Int]].doc("ArraySeq (updated)").doc)(equalTo(Doc("ArraySeq (updated)")))
+        assert(Schema[List[Double]].doc)(equalTo(Doc.empty)) &&
+        assert(Schema.derived[Seq[Int]].doc("Seq (updated)").doc)(equalTo(textDoc("Seq (updated)")))
       },
       test("gets and updates sequence examples") {
         assert(Schema[List[Double]].examples)(equalTo(Seq.empty)) &&
@@ -1213,8 +1162,8 @@ object SchemaSpec extends ZIOSpecDefault {
       test("gets and updates documentation of sequence elements using optic focus") {
         val elements1 = Traversal.listValues(Reflect.int[Binding])
         val elements2 = Traversal.setValues(Reflect.long[Binding])
-        assert(Schema[List[Int]].doc(elements1, "Int").doc(elements1))(equalTo(Doc("Int"))) &&
-        assert(Schema[Set[Long]].doc(elements2, "Long").doc(elements2))(equalTo(Doc("Long")))
+        assert(Schema[List[Int]].doc(elements1, "Int").doc(elements1))(equalTo(textDoc("Int"))) &&
+        assert(Schema[Set[Long]].doc(elements2, "Long").doc(elements2))(equalTo(textDoc("Long")))
       },
       test("gets and updates examples of sequence elements using optic focus") {
         val elements1 = Traversal.listValues(Reflect.int[Binding])
@@ -1230,9 +1179,26 @@ object SchemaSpec extends ZIOSpecDefault {
           schema2.modifiers(Seq(Modifier.config("key2", "value2"))).reflect.modifiers
         )(equalTo(Seq(Modifier.config("key1", "value1"), Modifier.config("key2", "value2"))))
       },
+      test("has consistent newBuilder, add and result") {
+        val schema1      = Schema.derived[Array[Int]]
+        val schema2      = Schema.derived[ArraySeq[Int]]
+        val constructor1 = schema1.reflect.asSequence.get.seqBinding.asInstanceOf[Binding.Seq[Array, Int]].constructor
+        val constructor2 =
+          schema2.reflect.asSequence.get.seqBinding.asInstanceOf[Binding.Seq[ArraySeq, Int]].constructor
+        val xs1 = constructor1.newBuilder[Int](0)
+        val xs2 = constructor2.newBuilder[Int](0)
+        constructor1.add(xs1, 1)
+        constructor2.add(xs2, 1)
+        constructor1.add(xs1, 2)
+        constructor2.add(xs2, 2)
+        constructor1.add(xs1, 3)
+        constructor2.add(xs2, 3)
+        assert(constructor1.result(xs1))(equalTo(Array(1, 2, 3))) &&
+        assert(constructor2.result(xs2))(equalTo(ArraySeq(1, 2, 3)))
+      },
       test("has consistent toDynamicValue and fromDynamicValue") {
-        assert(Schema[ArraySeq[Int]].fromDynamicValue(Schema[ArraySeq[Int]].toDynamicValue(ArraySeq(1, 2, 3))))(
-          isRight(equalTo(ArraySeq(1, 2, 3)))
+        assert(Schema[Seq[Int]].fromDynamicValue(Schema[Seq[Int]].toDynamicValue(Seq(1, 2, 3))))(
+          isRight(equalTo(Seq(1, 2, 3)))
         ) &&
         assert(
           Schema
@@ -1273,7 +1239,7 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(
           Schema[List[Boolean]].fromDynamicValue(
             DynamicValue.Sequence(
-              Vector(
+              Chunk(
                 DynamicValue.Primitive(PrimitiveValue.Int(1)),
                 DynamicValue.Primitive(PrimitiveValue.Int(1))
               )
@@ -1282,46 +1248,46 @@ object SchemaSpec extends ZIOSpecDefault {
         )(isLeft(hasError("Expected Boolean at: .each.at(0)\nExpected Boolean at: .each.at(1)"))) &&
         assert(
           Schema[List[Byte]].fromDynamicValue(
-            DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
+            DynamicValue.Sequence(Chunk(DynamicValue.Primitive(PrimitiveValue.String("1"))))
           )
         )(isLeft(hasError("Expected Byte at: .each.at(0)"))) &&
         assert(
           Schema[List[Char]].fromDynamicValue(
-            DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
+            DynamicValue.Sequence(Chunk(DynamicValue.Primitive(PrimitiveValue.String("1"))))
           )
         )(isLeft(hasError("Expected Char at: .each.at(0)"))) &&
         assert(
           Schema[List[Short]].fromDynamicValue(
-            DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
+            DynamicValue.Sequence(Chunk(DynamicValue.Primitive(PrimitiveValue.String("1"))))
           )
         )(isLeft(hasError("Expected Short at: .each.at(0)"))) &&
         assert(
           Schema[List[Int]].fromDynamicValue(
-            DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Long(1))))
+            DynamicValue.Sequence(Chunk(DynamicValue.Primitive(PrimitiveValue.String("1"))))
           )
         )(isLeft(hasError("Expected Int at: .each.at(0)"))) &&
         assert(
           Schema[List[Float]].fromDynamicValue(
-            DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
+            DynamicValue.Sequence(Chunk(DynamicValue.Primitive(PrimitiveValue.String("1"))))
           )
         )(isLeft(hasError("Expected Float at: .each.at(0)"))) &&
         assert(
           Schema[List[Long]].fromDynamicValue(
-            DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
+            DynamicValue.Sequence(Chunk(DynamicValue.Primitive(PrimitiveValue.String("1"))))
           )
         )(isLeft(hasError("Expected Long at: .each.at(0)"))) &&
         assert(
           Schema[List[Double]].fromDynamicValue(
-            DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
+            DynamicValue.Sequence(Chunk(DynamicValue.Primitive(PrimitiveValue.String("1"))))
           )
         )(isLeft(hasError("Expected Double at: .each.at(0)"))) &&
         assert(
           Schema[List[String]].fromDynamicValue(
-            DynamicValue.Sequence(Vector(DynamicValue.Primitive(PrimitiveValue.Int(1))))
+            DynamicValue.Sequence(Chunk(DynamicValue.Primitive(PrimitiveValue.Int(1))))
           )
         )(isLeft(hasError("Expected String at: .each.at(0)"))) &&
         assert(
-          Schema[List[Record]].fromDynamicValue(DynamicValue.Sequence(Vector(DynamicValue.Record(Vector.empty))))
+          Schema[List[Record]].fromDynamicValue(DynamicValue.Sequence(Chunk(DynamicValue.Record(Chunk.empty))))
         )(
           isLeft(
             equalTo(
@@ -1354,12 +1320,40 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(encodeToString { out =>
           Schema[List[Int]].encode(ToStringFormat)(out)(List(1, 2, 3))
         })(equalTo("List(1, 2, 3)"))
+      },
+      test("Chunk roundtrips through DynamicValue") {
+        val intChunk    = Chunk(1, 2, 3)
+        val stringChunk = Chunk("a", "b", "c")
+        val boolChunk   = Chunk(true, false, true)
+        val doubleChunk = Chunk(1.0, 2.0, 3.0)
+        val longChunk   = Chunk(1L, 2L, 3L)
+        val emptyChunk  = Chunk.empty[Int]
+        assert(Schema[Chunk[Int]].fromDynamicValue(Schema[Chunk[Int]].toDynamicValue(intChunk)))(
+          isRight(equalTo(intChunk))
+        ) &&
+        assert(Schema[Chunk[String]].fromDynamicValue(Schema[Chunk[String]].toDynamicValue(stringChunk)))(
+          isRight(equalTo(stringChunk))
+        ) &&
+        assert(Schema[Chunk[Boolean]].fromDynamicValue(Schema[Chunk[Boolean]].toDynamicValue(boolChunk)))(
+          isRight(equalTo(boolChunk))
+        ) &&
+        assert(Schema[Chunk[Double]].fromDynamicValue(Schema[Chunk[Double]].toDynamicValue(doubleChunk)))(
+          isRight(equalTo(doubleChunk))
+        ) &&
+        assert(Schema[Chunk[Long]].fromDynamicValue(Schema[Chunk[Long]].toDynamicValue(longChunk)))(
+          isRight(equalTo(longChunk))
+        ) &&
+        assert(Schema[Chunk[Int]].fromDynamicValue(Schema[Chunk[Int]].toDynamicValue(emptyChunk)))(
+          isRight(equalTo(emptyChunk))
+        )
       }
     ),
     suite("Reflect.Map")(
       test("has consistent equals and hashCode") {
         assert(Schema[Map[Short, Float]])(equalTo(Schema[Map[Short, Float]])) &&
+        assert(Schema[ChunkMap[Short, Float]])(equalTo(Schema[ChunkMap[Short, Float]])) &&
         assert(Schema[Map[Short, Float]].hashCode)(equalTo(Schema[Map[Short, Float]].hashCode)) &&
+        assert(Schema[ChunkMap[Short, Float]].hashCode)(equalTo(Schema[ChunkMap[Short, Float]].hashCode)) &&
         assert(Schema[Map[Short, Float]].defaultValue(Map.empty))(equalTo(Schema[Map[Short, Float]])) &&
         assert(Schema[Map[Short, Float]].defaultValue(Map.empty).hashCode)(
           equalTo(Schema[Map[Short, Float]].hashCode)
@@ -1369,6 +1363,7 @@ object SchemaSpec extends ZIOSpecDefault {
           equalTo(Schema[Map[Short, Float]].hashCode)
         ) &&
         assert(Schema[Map[Short, Float]].doc("Map[Short, Float] (updated)"))(not(equalTo(Schema[Map[Short, Float]]))) &&
+        assert(Schema[Map[Short, Boolean]]: Any)(not(equalTo(Schema[ChunkMap[Short, Boolean]]))) &&
         assert(Schema[Map[Short, Boolean]]: Any)(not(equalTo(Schema[Map[Short, Float]]))) &&
         assert(Schema[Map[String, Float]]: Any)(not(equalTo(Schema[Map[Short, Float]])))
       },
@@ -1377,18 +1372,26 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(Schema[Map[Int, Long]].defaultValue(Map.empty).getDefaultValue)(isSome(equalTo(Map.empty[Int, Long])))
       },
       test("gets and updates map documentation") {
-        assert(Schema[Map[Int, Long]].doc)(equalTo(Doc.Empty)) &&
-        assert(Schema[Map[Int, Long]].doc("Map (updated)").doc)(equalTo(Doc("Map (updated)")))
+        assert(Schema[Map[Int, Long]].doc)(equalTo(Doc.empty)) &&
+        assert(Schema[Map[Int, Long]].doc("Map (updated)").doc)(equalTo(textDoc("Map (updated)")))
       },
       test("gets and updates map examples") {
         val map1 = Reflect.Map[Binding, Int, Long, Map](
           key = Reflect.int,
           value = Reflect.long,
-          typeName = TypeName.map(TypeName.int, TypeName.long),
+          typeId = zio.blocks.typeid.TypeId.of[Map[Int, Long]],
           mapBinding = Binding.Map[Map, Int, Long](
             constructor = MapConstructor.map,
-            deconstructor = MapDeconstructor.map,
-            examples = Map(1 -> 1L, 2 -> 2L, 3 -> 3L) :: Nil
+            deconstructor = MapDeconstructor.map
+          ),
+          storedExamples = Seq(
+            DynamicValue.Map(
+              zio.blocks.chunk.Chunk(
+                (DynamicValue.Primitive(PrimitiveValue.Int(1)), DynamicValue.Primitive(PrimitiveValue.Long(1L))),
+                (DynamicValue.Primitive(PrimitiveValue.Int(2)), DynamicValue.Primitive(PrimitiveValue.Long(2L))),
+                (DynamicValue.Primitive(PrimitiveValue.Int(3)), DynamicValue.Primitive(PrimitiveValue.Long(3L)))
+              )
+            )
           )
         )
         assert(Schema(map1).examples)(equalTo(Map(1 -> 1L, 2 -> 2L, 3 -> 3L) :: Nil)) &&
@@ -1405,8 +1408,8 @@ object SchemaSpec extends ZIOSpecDefault {
       test("gets and updates documentation of map keys and values using optic focus") {
         val mapKeys   = Traversal.mapKeys(Reflect.map(Reflect.int[Binding], Reflect.long[Binding]))
         val mapValues = Traversal.mapValues(Reflect.map(Reflect.int[Binding], Reflect.long[Binding]))
-        assert(Schema[Map[Int, Long]].doc(mapKeys, "Int").doc(mapKeys))(equalTo(Doc("Int"))) &&
-        assert(Schema[Map[Int, Long]].doc(mapValues, "Long").doc(mapValues))(equalTo(Doc("Long")))
+        assert(Schema[Map[Int, Long]].doc(mapKeys, "Int").doc(mapKeys))(equalTo(textDoc("Int"))) &&
+        assert(Schema[Map[Int, Long]].doc(mapValues, "Long").doc(mapValues))(equalTo(textDoc("Long")))
       },
       test("gets and updates examples of map keys and values using optic focus") {
         val mapKeys   = Traversal.mapKeys(Reflect.map(Reflect.int[Binding], Reflect.long[Binding]))
@@ -1426,14 +1429,18 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(
           Schema[Map[Int, Long]].fromDynamicValue(Schema[Map[Int, Long]].toDynamicValue(Map(1 -> 1L, 2 -> 2L, 3 -> 3L)))
         )(isRight(equalTo(Map(1 -> 1L, 2 -> 2L, 3 -> 3L)))) &&
+        assert(
+          Schema[ChunkMap[Int, Long]]
+            .fromDynamicValue(Schema[ChunkMap[Int, Long]].toDynamicValue(ChunkMap(1 -> 1L, 2 -> 2L, 3 -> 3L)))
+        )(isRight(equalTo(ChunkMap(1 -> 1L, 2 -> 2L, 3 -> 3L)))) &&
         assert(Schema[Map[Int, Long]].fromDynamicValue(DynamicValue.Primitive(PrimitiveValue.Int(1))))(
           isLeft(hasError("Expected a map at: ."))
         ) &&
         assert(
           Schema[Map[Int, Long]].fromDynamicValue(
             DynamicValue.Map(
-              Vector(
-                (DynamicValue.Primitive(PrimitiveValue.Long(1)), DynamicValue.Primitive(PrimitiveValue.Int(1)))
+              Chunk(
+                (DynamicValue.Primitive(PrimitiveValue.String("1")), DynamicValue.Primitive(PrimitiveValue.String("1")))
               )
             )
           )
@@ -1441,9 +1448,9 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(
           Schema[Map[Int, Long]].fromDynamicValue(
             DynamicValue.Map(
-              Vector(
-                (DynamicValue.Primitive(PrimitiveValue.Int(1)), DynamicValue.Primitive(PrimitiveValue.Int(1))),
-                (DynamicValue.Primitive(PrimitiveValue.Int(1)), DynamicValue.Primitive(PrimitiveValue.Int(1)))
+              Chunk(
+                (DynamicValue.Primitive(PrimitiveValue.Int(1)), DynamicValue.Primitive(PrimitiveValue.String("1"))),
+                (DynamicValue.Primitive(PrimitiveValue.Int(1)), DynamicValue.Primitive(PrimitiveValue.String("1")))
               )
             )
           )
@@ -1453,12 +1460,12 @@ object SchemaSpec extends ZIOSpecDefault {
               SchemaError(
                 errors = ::(
                   ExpectationMismatch(
-                    source = DynamicOptic(nodes = Vector(MapValues, AtMapKey(1))),
+                    source = DynamicOptic(nodes = Vector(MapValues, AtMapKey(Schema[Int].toDynamicValue(1)))),
                     expectation = "Expected Long"
                   ),
                   ::(
                     ExpectationMismatch(
-                      source = DynamicOptic(nodes = Vector(MapValues, AtMapKey(1))),
+                      source = DynamicOptic(nodes = Vector(MapValues, AtMapKey(Schema[Int].toDynamicValue(1)))),
                       expectation = "Expected Long"
                     ),
                     Nil
@@ -1478,7 +1485,10 @@ object SchemaSpec extends ZIOSpecDefault {
       test("encodes values using provided formats and outputs") {
         assert(encodeToString { out =>
           Schema[Map[Int, Char]].encode(ToStringFormat)(out)(Map(1 -> 'a', 2 -> 'b', 3 -> 'c'))
-        })(equalTo("Map(1 -> a, 2 -> b, 3 -> c)"))
+        })(equalTo("Map(1 -> a, 2 -> b, 3 -> c)")) &&
+        assert(encodeToString { out =>
+          Schema[ChunkMap[Int, Char]].encode(ToStringFormat)(out)(ChunkMap(1 -> 'a', 2 -> 'b', 3 -> 'c'))
+        })(equalTo("ChunkMap(1 -> a, 2 -> b, 3 -> c)"))
       }
     ),
     suite("Reflect.Dynamic")(
@@ -1492,8 +1502,8 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(Schema[DynamicValue].defaultValue(value).getDefaultValue)(isSome(equalTo(value)))
       },
       test("gets and updates dynamic documentation") {
-        assert(Schema[DynamicValue].doc)(equalTo(Doc.Empty)) &&
-        assert(Schema[DynamicValue].doc("Dynamic (updated)").doc)(equalTo(Doc("Dynamic (updated)")))
+        assert(Schema[DynamicValue].doc)(equalTo(Doc.empty)) &&
+        assert(Schema[DynamicValue].doc("Dynamic (updated)").doc)(equalTo(textDoc("Dynamic (updated)")))
       },
       test("gets and updates dynamic examples") {
         val value = DynamicValue.Primitive(PrimitiveValue.Int(1))
@@ -1517,7 +1527,7 @@ object SchemaSpec extends ZIOSpecDefault {
       test("encodes values using provided formats and outputs") {
         assert(encodeToString { out =>
           Schema[DynamicValue].encode(ToStringFormat)(out)(DynamicValue.Primitive(PrimitiveValue.Int(1)))
-        })(equalTo("Primitive(Int(1))"))
+        })(equalTo("1"))
       }
     ),
     suite("Reflect.Deferred")(
@@ -1525,7 +1535,7 @@ object SchemaSpec extends ZIOSpecDefault {
         val deferred1 = Reflect.Deferred[Binding, Int](() => Reflect.int)
         val deferred2 = Reflect.Deferred[Binding, Int](() => Reflect.int)
         val deferred3 = Reflect.int[Binding]
-        val deferred4 = Primitive(PrimitiveType.Int(Validation.Numeric.Positive), TypeName.int, Binding.Primitive.int)
+        val deferred4 = Primitive(PrimitiveType.Int(Validation.Numeric.Positive), TypeId.int, Binding.Primitive.int)
         val deferred5 = Reflect.Deferred[Binding, Int](() => deferred4)
         assert(Schema(deferred1))(equalTo(Schema(deferred1))) &&
         assert(Schema(deferred1).hashCode)(equalTo(Schema(deferred1).hashCode)) &&
@@ -1543,15 +1553,16 @@ object SchemaSpec extends ZIOSpecDefault {
       },
       test("gets and updates sequence documentation") {
         val deferred1 = Reflect.Deferred[Binding, Int](() => Reflect.int)
-        assert(Schema(deferred1).doc)(equalTo(Doc.Empty)) &&
-        assert(Schema(deferred1).doc("Deferred (updated)").doc)(equalTo(Doc("Deferred (updated)")))
+        assert(Schema(deferred1).doc)(equalTo(Doc.empty)) &&
+        assert(Schema(deferred1).doc("Deferred (updated)").doc)(equalTo(textDoc("Deferred (updated)")))
       },
       test("gets and updates deferred examples") {
         val deferred1 = Reflect.Deferred[Binding, Int] { () =>
           Primitive(
             PrimitiveType.Int(Validation.Numeric.Positive),
-            TypeName.int,
-            Binding.Primitive(examples = Seq(1, 2, 3))
+            TypeId.int,
+            Binding.Primitive(),
+            storedExamples = Seq(1, 2, 3).map(i => DynamicValue.Primitive(PrimitiveValue.Int(i)))
           )
         }
         assert(Schema(deferred1).examples)(equalTo(Seq(1, 2, 3))) &&
@@ -1581,11 +1592,11 @@ object SchemaSpec extends ZIOSpecDefault {
         val elements  = Traversal.listValues(Reflect.int[Binding])
         val mapKeys   = Traversal.mapKeys(Reflect.map(Reflect.int[Binding], Reflect.long[Binding]))
         val mapValues = Traversal.mapValues(Reflect.map(Reflect.int[Binding], Reflect.long[Binding]))
-        assert(Schema(deferred1).doc(Record.b, "b").doc(Record.b))(equalTo(Doc("b"))) &&
-        assert(Schema(deferred2).doc(Variant.case1, "Case1").doc(Variant.case1))(equalTo(Doc("Case1")))
-        assert(Schema(deferred3).doc(elements, "Int").doc(elements))(equalTo(Doc("Int"))) &&
-        assert(Schema(deferred4).doc(mapKeys, "Int").doc(mapKeys))(equalTo(Doc("Int"))) &&
-        assert(Schema(deferred4).doc(mapValues, "Long").doc(mapValues))(equalTo(Doc("Long")))
+        assert(Schema(deferred1).doc(Record.b, "b").doc(Record.b))(equalTo(textDoc("b"))) &&
+        assert(Schema(deferred2).doc(Variant.case1, "Case1").doc(Variant.case1))(equalTo(textDoc("Case1")))
+        assert(Schema(deferred3).doc(elements, "Int").doc(elements))(equalTo(textDoc("Int"))) &&
+        assert(Schema(deferred4).doc(mapKeys, "Int").doc(mapKeys))(equalTo(textDoc("Int"))) &&
+        assert(Schema(deferred4).doc(mapValues, "Long").doc(mapValues))(equalTo(textDoc("Long")))
       },
       test("gets and updates examples of deferred value using optic focus") {
         val deferred1 = Reflect.Deferred[Binding, Record](() => Record.schema.reflect)
@@ -1690,8 +1701,8 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(Schema[PosInt].defaultValue(value).getDefaultValue)(isSome(equalTo(value)))
       },
       test("gets and updates wrapper documentation") {
-        assert(Schema[PosInt].doc)(equalTo(Doc.Empty)) &&
-        assert(Schema[PosInt].doc("Dynamic (updated)").doc)(equalTo(Doc("Dynamic (updated)")))
+        assert(Schema[PosInt].doc)(equalTo(Doc.empty)) &&
+        assert(Schema[PosInt].doc("Dynamic (updated)").doc)(equalTo(textDoc("Dynamic (updated)")))
       },
       test("gets and updates wrapper examples") {
         val value = PosInt.applyUnsafe(1)
@@ -1705,8 +1716,8 @@ object SchemaSpec extends ZIOSpecDefault {
         )
       },
       test("gets and updates documentation of wrapped schema using optic focus") {
-        assert(PosInt.schema.doc(PosInt.wrapped, "Int").doc(PosInt.wrapped))(equalTo(Doc("Int"))) &&
-        assert(Email.schema.doc(Email.wrapped, "String").doc(Email.wrapped))(equalTo(Doc("String")))
+        assert(PosInt.schema.doc(PosInt.wrapped, "Int").doc(PosInt.wrapped))(equalTo(textDoc("Int"))) &&
+        assert(Email.schema.doc(Email.wrapped, "String").doc(Email.wrapped))(equalTo(textDoc("String")))
       },
       test("gets and updates examples of wrapped schema using optic focus") {
         assert(PosInt.schema.examples(PosInt.wrapped, 2).examples(PosInt.wrapped))(equalTo(Seq(2))) &&
@@ -1726,7 +1737,7 @@ object SchemaSpec extends ZIOSpecDefault {
         val value = PosInt.applyUnsafe(1)
         assert(Schema[PosInt].fromDynamicValue(Schema[PosInt].toDynamicValue(value)))(isRight(equalTo(value))) &&
         assert(Schema[PosInt].fromDynamicValue(DynamicValue.Primitive(PrimitiveValue.Int(-1))))(
-          isLeft(hasError("Expected PosInt: Expected positive value at: ."))
+          isLeft(hasError("Expected positive value"))
         ) &&
         assert(Schema[PosInt].fromDynamicValue(DynamicValue.Primitive(PrimitiveValue.String("WWW"))))(
           isLeft(hasError("Expected Int at: ."))
@@ -1743,6 +1754,148 @@ object SchemaSpec extends ZIOSpecDefault {
         assert(encodeToString { out =>
           Schema[PosInt].encode(ToStringFormat)(out)(PosInt.applyUnsafe(1))
         })(equalTo("PosInt(1)"))
+      }
+    ),
+    suite("transform (failable in one direction)")(
+      test("succeeds when transformation succeeds") {
+        case class Positive(value: Int)
+        val positiveSchema: Schema[Positive] = Schema[Int].transform(
+          to = n =>
+            if (n > 0) Positive(n)
+            else throw SchemaError.validationFailed(s"Expected positive, got $n"),
+          from = _.value
+        )
+        val dv = Schema[Int].toDynamicValue(42)
+        assert(positiveSchema.fromDynamicValue(dv))(isRight(equalTo(Positive(42))))
+      },
+      test("fails with SchemaError when transformation fails") {
+        case class Positive(value: Int)
+        val positiveSchema: Schema[Positive] = Schema[Int].transform(
+          to = n =>
+            if (n > 0) Positive(n)
+            else throw SchemaError.validationFailed(s"Expected positive, got $n"),
+          from = _.value
+        )
+        val dv = Schema[Int].toDynamicValue(-1)
+        assert(positiveSchema.fromDynamicValue(dv))(isLeft(hasError("Expected positive, got -1")))
+      },
+      test("round-trips correctly") {
+        case class Positive(value: Int)
+        val positiveSchema: Schema[Positive] = Schema[Int].transform(
+          to = n =>
+            if (n > 0) Positive(n)
+            else throw SchemaError.validationFailed(s"Expected positive, got $n"),
+          from = _.value
+        )
+        val value = Positive(42)
+        val dv    = positiveSchema.toDynamicValue(value)
+        assert(positiveSchema.fromDynamicValue(dv))(isRight(equalTo(value)))
+      },
+      test("preserves SchemaError details") {
+        case class Positive(value: Int)
+        val customError                      = SchemaError.conversionFailed(Nil, "Custom validation error with details")
+        val positiveSchema: Schema[Positive] = Schema[Int].transform(
+          to = n =>
+            if (n > 0) Positive(n)
+            else throw customError,
+          from = _.value
+        )
+        val dv     = Schema[Int].toDynamicValue(-1)
+        val result = positiveSchema.fromDynamicValue(dv)
+        assert(result.swap.map(_.message))(isRight(equalTo("Custom validation error with details at: .wrapped")))
+      },
+      test("creates Wrapper reflect") {
+        assertTrue(PosInt.schema.reflect.isWrapper)
+      },
+      test("works with existing PosInt wrapper schema") {
+        val dv = Schema[Int].toDynamicValue(42)
+        assert(PosInt.schema.fromDynamicValue(dv))(isRight(equalTo(PosInt.applyUnsafe(42))))
+      }
+    ),
+    suite("transform (total)")(
+      test("transforms schema with total functions") {
+        case class UserId(value: Long)
+        val userIdSchema: Schema[UserId] = Schema[Long].transform(to = UserId(_), from = _.value)
+        val dv                           = Schema[Long].toDynamicValue(42L)
+        assert(userIdSchema.fromDynamicValue(dv))(isRight(equalTo(UserId(42L))))
+      },
+      test("round-trips correctly") {
+        case class UserId(value: Long)
+        val userIdSchema: Schema[UserId] = Schema[Long].transform(to = UserId(_), from = _.value)
+        val value                        = UserId(123L)
+        val dv                           = userIdSchema.toDynamicValue(value)
+        assert(userIdSchema.fromDynamicValue(dv))(isRight(equalTo(value)))
+      },
+      test("creates Wrapper reflect") {
+        case class UserId(value: Long)
+        val userIdSchema: Schema[UserId] = Schema[Long].transform(to = UserId(_), from = _.value)
+        assertTrue(userIdSchema.reflect.isWrapper)
+      },
+      test("works with String-based wrappers") {
+        assertTrue(Email.schema.reflect.isWrapper) &&
+        assert(Email.schema.fromDynamicValue(Schema[String].toDynamicValue("test@example.com")))(
+          isRight(equalTo(Email("test@example.com")))
+        )
+      }
+    ),
+    suite("transform (failable in both directions)")(
+      test("succeeds when both wrap and unwrap succeed") {
+        case class ValidatedInt(value: Int)
+        val schema: Schema[ValidatedInt] = Schema[Int].transform[ValidatedInt](
+          to = (n: Int) =>
+            if (n > 0) ValidatedInt(n)
+            else throw SchemaError.validationFailed(s"Expected positive, got $n"),
+          from = (v: ValidatedInt) =>
+            if (v.value < 100) v.value
+            else throw SchemaError.validationFailed(s"Value too large: ${v.value}")
+        )
+        val dv = Schema[Int].toDynamicValue(42)
+        assert(schema.fromDynamicValue(dv))(isRight(equalTo(ValidatedInt(42))))
+      },
+      test("fails when wrap fails") {
+        case class ValidatedInt(value: Int)
+        val schema: Schema[ValidatedInt] = Schema[Int].transform[ValidatedInt](
+          to = (n: Int) =>
+            if (n > 0) ValidatedInt(n)
+            else throw SchemaError.validationFailed(s"Expected positive, got $n"),
+          from = (v: ValidatedInt) => v.value
+        )
+        val dv = Schema[Int].toDynamicValue(-1)
+        assert(schema.fromDynamicValue(dv))(isLeft(hasError("Expected positive, got -1")))
+      },
+      test("fails when unwrap fails during toDynamicValue") {
+        case class ValidatedInt(value: Int)
+        val schema: Schema[ValidatedInt] = Schema[Int].transform[ValidatedInt](
+          to = (n: Int) => ValidatedInt(n),
+          from = (v: ValidatedInt) =>
+            if (v.value < 100) v.value
+            else throw SchemaError.validationFailed(s"Value too large: ${v.value}")
+        )
+        val result = scala.util.Try(schema.toDynamicValue(ValidatedInt(200)))
+        assertTrue(result.isFailure) &&
+        assertTrue(result.failed.get.getMessage.contains("Value too large: 200"))
+      },
+      test("round-trips correctly when both directions succeed") {
+        case class ValidatedInt(value: Int)
+        val schema: Schema[ValidatedInt] = Schema[Int].transform[ValidatedInt](
+          to = (n: Int) =>
+            if (n > 0) ValidatedInt(n)
+            else throw SchemaError.validationFailed(s"Expected positive, got $n"),
+          from = (v: ValidatedInt) =>
+            if (v.value < 100) v.value
+            else throw SchemaError.validationFailed(s"Value too large: ${v.value}")
+        )
+        val value = ValidatedInt(42)
+        val dv    = schema.toDynamicValue(value)
+        assert(schema.fromDynamicValue(dv))(isRight(equalTo(value)))
+      },
+      test("creates Wrapper reflect") {
+        case class ValidatedInt(value: Int)
+        val schema: Schema[ValidatedInt] = Schema[Int].transform[ValidatedInt](
+          to = (n: Int) => ValidatedInt(n),
+          from = (v: ValidatedInt) => v.value
+        )
+        assertTrue(schema.reflect.isWrapper)
       }
     ),
     test("doesn't generate schema for unsupported classes") {
@@ -1796,7 +1949,8 @@ object SchemaSpec extends ZIOSpecDefault {
           )
         )
       )
-    }
+    },
+    typeIdConsistencySuite
   )
 
   private[this] def hasError(message: String): Assertion[SchemaError] =
@@ -1863,22 +2017,26 @@ object SchemaSpec extends ZIOSpecDefault {
   case class PosInt private (value: Int) extends AnyVal
 
   object PosInt extends CompanionOptics[PosInt] {
-    def apply(value: Int): Either[String, PosInt] =
+    def apply(value: Int): Either[SchemaError, PosInt] =
       if (value >= 0) new Right(new PosInt(value))
-      else new Left("Expected positive value")
+      else new Left(SchemaError.validationFailed("Expected positive value"))
 
     def applyUnsafe(value: Int): PosInt =
       if (value >= 0) new PosInt(value)
       else throw new IllegalArgumentException("Expected positive value")
 
-    implicit val schema: Schema[PosInt] = Schema.derived.wrap(PosInt.apply, _.value)
-    val wrapped: Optional[PosInt, Int]  = $(_.wrapped[Int])
+    implicit lazy val typeId: TypeId[PosInt] = TypeId.of[PosInt]
+    implicit lazy val schema: Schema[PosInt] =
+      Schema[Int].transform[PosInt](PosInt.applyUnsafe, _.value)
+    val wrapped: Optional[PosInt, Int] = $(_.wrapped[Int])
   }
 
   case class Email(value: String)
 
   object Email extends CompanionOptics[Email] {
-    implicit val schema: Schema[Email]   = Schema.derived.wrapTotal(x => new Email(x), _.value)
+    implicit lazy val typeId: TypeId[Email] = TypeId.of[Email]
+    implicit lazy val schema: Schema[Email] =
+      Schema[String].transform[Email](x => new Email(x), _.value)
     val wrapped: Optional[Email, String] = $(_.wrapped[String])
   }
 
@@ -1892,12 +2050,14 @@ object SchemaSpec extends ZIOSpecDefault {
       extends TextFormat(
         "text/plain",
         new Deriver[TextCodec] {
-          override def derivePrimitive[F[_, _], A](
+          override def derivePrimitive[A](
             primitiveType: PrimitiveType[A],
-            typeName: TypeName[A],
-            binding: Binding[BindingType.Primitive, A],
+            typeId: zio.blocks.typeid.TypeId[A],
+            binding: Binding.Primitive[A],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            defaultValue: Option[A],
+            examples: Seq[A]
           ): Lazy[TextCodec[A]] =
             Lazy(new TextCodec[A] {
               override def encode(value: A, output: CharBuffer): Unit = output.append(value.toString)
@@ -1907,10 +2067,12 @@ object SchemaSpec extends ZIOSpecDefault {
 
           override def deriveRecord[F[_, _], A](
             fields: IndexedSeq[Term[F, A, ?]],
-            typeName: TypeName[A],
-            binding: Binding[BindingType.Record, A],
+            typeId: zio.blocks.typeid.TypeId[A],
+            binding: Binding.Record[A],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            defaultValue: Option[A],
+            examples: Seq[A]
           )(implicit F: HasBinding[F], D: HasInstance[F]): Lazy[TextCodec[A]] =
             Lazy(new TextCodec[A] {
               override def encode(value: A, output: CharBuffer): Unit = output.append(value.toString)
@@ -1920,10 +2082,12 @@ object SchemaSpec extends ZIOSpecDefault {
 
           override def deriveVariant[F[_, _], A](
             cases: IndexedSeq[Term[F, A, ?]],
-            typeName: TypeName[A],
-            binding: Binding[BindingType.Variant, A],
+            typeId: zio.blocks.typeid.TypeId[A],
+            binding: Binding.Variant[A],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            defaultValue: Option[A],
+            examples: Seq[A]
           )(implicit F: HasBinding[F], D: HasInstance[F]): Lazy[TextCodec[A]] =
             Lazy(new TextCodec[A] {
               override def encode(value: A, output: CharBuffer): Unit = output.append(value.toString)
@@ -1933,10 +2097,12 @@ object SchemaSpec extends ZIOSpecDefault {
 
           override def deriveSequence[F[_, _], C[_], A](
             element: Reflect[F, A],
-            typeName: TypeName[C[A]],
-            binding: Binding[BindingType.Seq[C], C[A]],
+            typeId: zio.blocks.typeid.TypeId[C[A]],
+            binding: Binding.Seq[C, A],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            defaultValue: Option[C[A]],
+            examples: Seq[C[A]]
           )(implicit F: HasBinding[F], D: HasInstance[F]): Lazy[TextCodec[C[A]]] =
             Lazy(new TextCodec[C[A]] {
               override def encode(value: C[A], output: CharBuffer): Unit = output.append(value.toString)
@@ -1947,10 +2113,12 @@ object SchemaSpec extends ZIOSpecDefault {
           override def deriveMap[F[_, _], M[_, _], K, V](
             key: Reflect[F, K],
             value: Reflect[F, V],
-            typeName: TypeName[M[K, V]],
-            binding: Binding[BindingType.Map[M], M[K, V]],
+            typeId: zio.blocks.typeid.TypeId[M[K, V]],
+            binding: Binding.Map[M, K, V],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            defaultValue: Option[M[K, V]],
+            examples: Seq[M[K, V]]
           )(implicit F: HasBinding[F], D: HasInstance[F]): Lazy[TextCodec[M[K, V]]] =
             Lazy(new TextCodec[M[K, V]] {
               override def encode(value: M[K, V], output: CharBuffer): Unit = output.append(value.toString)
@@ -1959,9 +2127,11 @@ object SchemaSpec extends ZIOSpecDefault {
             })
 
           override def deriveDynamic[F[_, _]](
-            binding: Binding[BindingType.Dynamic, DynamicValue],
+            binding: Binding.Dynamic,
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            defaultValue: Option[DynamicValue],
+            examples: Seq[DynamicValue]
           )(implicit
             F: HasBinding[F],
             D: HasInstance[F]
@@ -1974,11 +2144,12 @@ object SchemaSpec extends ZIOSpecDefault {
 
           override def deriveWrapper[F[_, _], A, B](
             wrapped: Reflect[F, B],
-            typeName: TypeName[A],
-            wrapperPrimitiveType: Option[PrimitiveType[A]],
-            binding: Binding[BindingType.Wrapper[A, B], A],
+            typeId: zio.blocks.typeid.TypeId[A],
+            binding: Binding.Wrapper[A, B],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            defaultValue: Option[A],
+            examples: Seq[A]
           )(implicit F: HasBinding[F], D: HasInstance[F]): Lazy[TextCodec[A]] =
             Lazy(new TextCodec[A] {
               override def encode(value: A, output: CharBuffer): Unit = output.append(value.toString)
@@ -1987,4 +2158,190 @@ object SchemaSpec extends ZIOSpecDefault {
             })
         }
       )
+
+  case class ProductId(value: Long)
+
+  object ProductId {
+    implicit val customTypeId: TypeId[ProductId] =
+      TypeId.nominal[ProductId]("ProductId", zio.blocks.typeid.Owner.fromPackagePath("com.acme.catalog"))
+
+    implicit val schema: Schema[ProductId] =
+      Schema[Long].transform[ProductId](ProductId.apply, _.value)
+  }
+
+  case class CategoryId(value: String)
+
+  object CategoryId {
+    implicit val customTypeId: TypeId[CategoryId] =
+      TypeId.nominal[CategoryId]("CategoryId", zio.blocks.typeid.Owner.fromPackagePath("com.acme.catalog"))
+
+    implicit val schema: Schema[CategoryId] =
+      Schema[String].transform[CategoryId](CategoryId.apply, _.value)
+  }
+
+  case class ListContainer(items: List[ProductId])
+  object ListContainer extends CompanionOptics[ListContainer] {
+    implicit val schema: Schema[ListContainer] = Schema.derived
+  }
+
+  case class SetContainer(items: Set[ProductId])
+  object SetContainer extends CompanionOptics[SetContainer] {
+    implicit val schema: Schema[SetContainer] = Schema.derived
+  }
+
+  case class VectorContainer(items: Vector[ProductId])
+  object VectorContainer extends CompanionOptics[VectorContainer] {
+    implicit val schema: Schema[VectorContainer] = Schema.derived
+  }
+
+  case class MapContainer(items: scala.collection.immutable.Map[CategoryId, ProductId])
+  object MapContainer extends CompanionOptics[MapContainer] {
+    implicit val schema: Schema[MapContainer] = Schema.derived
+  }
+
+  case class OptionContainer(item: Option[ProductId])
+  object OptionContainer extends CompanionOptics[OptionContainer] {
+    implicit val schema: Schema[OptionContainer] = Schema.derived
+  }
+
+  case class EitherContainer(item: Either[CategoryId, ProductId])
+  object EitherContainer extends CompanionOptics[EitherContainer] {
+    implicit val schema: Schema[EitherContainer] = Schema.derived
+  }
+
+  case class ArrayContainer(items: Array[ProductId])
+  object ArrayContainer extends CompanionOptics[ArrayContainer] {
+    implicit val schema: Schema[ArrayContainer] = Schema.derived
+  }
+
+  case class ArraySeqContainer(items: ArraySeq[ProductId])
+  object ArraySeqContainer extends CompanionOptics[ArraySeqContainer] {
+    implicit val schema: Schema[ArraySeqContainer] = Schema.derived
+  }
+
+  def typeIdConsistencySuite: Spec[Any, Nothing] = suite("TypeId consistency between Schema and container typeArgs")(
+    test("List element uses custom TypeId") {
+      val schema       = Schema[ListContainer]
+      val record       = schema.reflect.asRecord.get
+      val field        = record.fields.find(_.name == "items").get
+      val seqReflect   = field.value.asSequenceUnknown.get.sequence
+      val elementTid   = seqReflect.element.typeId
+      val containerTid = seqReflect.typeId
+
+      assertTrue(elementTid.asInstanceOf[TypeId[Any]] == ProductId.customTypeId.asInstanceOf[TypeId[Any]]) &&
+      assertTypeArgMatches(containerTid, 0, ProductId.customTypeId)
+    },
+    test("Set element uses custom TypeId") {
+      val schema       = Schema[SetContainer]
+      val record       = schema.reflect.asRecord.get
+      val field        = record.fields.find(_.name == "items").get
+      val seqReflect   = field.value.asSequenceUnknown.get.sequence
+      val elementTid   = seqReflect.element.typeId
+      val containerTid = seqReflect.typeId
+
+      assertTrue(elementTid.asInstanceOf[TypeId[Any]] == ProductId.customTypeId.asInstanceOf[TypeId[Any]]) &&
+      assertTypeArgMatches(containerTid, 0, ProductId.customTypeId)
+    },
+    test("Vector element uses custom TypeId") {
+      val schema       = Schema[VectorContainer]
+      val record       = schema.reflect.asRecord.get
+      val field        = record.fields.find(_.name == "items").get
+      val seqReflect   = field.value.asSequenceUnknown.get.sequence
+      val elementTid   = seqReflect.element.typeId
+      val containerTid = seqReflect.typeId
+
+      assertTrue(elementTid.asInstanceOf[TypeId[Any]] == ProductId.customTypeId.asInstanceOf[TypeId[Any]]) &&
+      assertTypeArgMatches(containerTid, 0, ProductId.customTypeId)
+    },
+    test("Map key and value use custom TypeIds") {
+      val schema       = Schema[MapContainer]
+      val record       = schema.reflect.asRecord.get
+      val field        = record.fields.find(_.name == "items").get
+      val mapReflect   = field.value.asMapUnknown.get.map
+      val keyTid       = mapReflect.key.typeId
+      val valueTid     = mapReflect.value.typeId
+      val containerTid = mapReflect.typeId
+
+      assertTrue(
+        keyTid.asInstanceOf[TypeId[Any]] == CategoryId.customTypeId.asInstanceOf[TypeId[Any]],
+        valueTid.asInstanceOf[TypeId[Any]] == ProductId.customTypeId.asInstanceOf[TypeId[Any]]
+      ) &&
+      assertTypeArgMatches(containerTid, 0, CategoryId.customTypeId) &&
+      assertTypeArgMatches(containerTid, 1, ProductId.customTypeId)
+    },
+    test("Option element uses custom TypeId") {
+      val schema       = Schema[OptionContainer]
+      val record       = schema.reflect.asRecord.get
+      val field        = record.fields.find(_.name == "item").get
+      val optReflect   = field.value.asVariant.get
+      val someCase     = optReflect.cases.find(_.name == "Some").get
+      val someRecord   = someCase.value.asRecord.get
+      val valueField   = someRecord.fields.find(_.name == "value").get
+      val elementTid   = valueField.value.typeId
+      val containerTid = optReflect.typeId
+
+      assertTrue(elementTid.asInstanceOf[TypeId[Any]] == ProductId.customTypeId.asInstanceOf[TypeId[Any]]) &&
+      assertTypeArgMatches(containerTid, 0, ProductId.customTypeId)
+    },
+    test("Either left and right use custom TypeIds") {
+      val schema        = Schema[EitherContainer]
+      val record        = schema.reflect.asRecord.get
+      val field         = record.fields.find(_.name == "item").get
+      val eitherReflect = field.value.asVariant.get
+      val leftCase      = eitherReflect.cases.find(_.name == "Left").get
+      val rightCase     = eitherReflect.cases.find(_.name == "Right").get
+      val leftRecord    = leftCase.value.asRecord.get
+      val rightRecord   = rightCase.value.asRecord.get
+      val leftTid       = leftRecord.fields.find(_.name == "value").get.value.typeId
+      val rightTid      = rightRecord.fields.find(_.name == "value").get.value.typeId
+      val containerTid  = eitherReflect.typeId
+
+      assertTrue(
+        leftTid.asInstanceOf[TypeId[Any]] == CategoryId.customTypeId.asInstanceOf[TypeId[Any]],
+        rightTid.asInstanceOf[TypeId[Any]] == ProductId.customTypeId.asInstanceOf[TypeId[Any]]
+      ) &&
+      assertTypeArgMatches(containerTid, 0, CategoryId.customTypeId) &&
+      assertTypeArgMatches(containerTid, 1, ProductId.customTypeId)
+    },
+    test("Array element uses custom TypeId") {
+      val schema       = Schema[ArrayContainer]
+      val record       = schema.reflect.asRecord.get
+      val field        = record.fields.find(_.name == "items").get
+      val seqReflect   = field.value.asSequenceUnknown.get.sequence
+      val elementTid   = seqReflect.element.typeId
+      val containerTid = seqReflect.typeId
+
+      assertTrue(elementTid.asInstanceOf[TypeId[Any]] == ProductId.customTypeId.asInstanceOf[TypeId[Any]]) &&
+      assertTypeArgMatches(containerTid, 0, ProductId.customTypeId)
+    },
+    test("ArraySeq element uses custom TypeId") {
+      val schema       = Schema[ArraySeqContainer]
+      val record       = schema.reflect.asRecord.get
+      val field        = record.fields.find(_.name == "items").get
+      val seqReflect   = field.value.asSequenceUnknown.get.sequence
+      val elementTid   = seqReflect.element.typeId
+      val containerTid = seqReflect.typeId
+
+      assertTrue(elementTid.asInstanceOf[TypeId[Any]] == ProductId.customTypeId.asInstanceOf[TypeId[Any]]) &&
+      assertTypeArgMatches(containerTid, 0, ProductId.customTypeId)
+    }
+  )
+
+  private def assertTypeArgMatches(
+    containerTypeId: TypeId[_],
+    index: Int,
+    expectedTypeId: TypeId[_]
+  ): TestResult = {
+    val typeArgs = containerTypeId.typeArgs
+    if (typeArgs.size <= index) {
+      assertTrue(false)
+    } else {
+      typeArgs(index) match {
+        case zio.blocks.typeid.TypeRepr.Ref(argTypeId) =>
+          assertTrue(argTypeId == expectedTypeId.asInstanceOf[TypeId[Any]])
+        case _ =>
+          assertTrue(false)
+      }
+    }
+  }
 }

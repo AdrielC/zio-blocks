@@ -1,5 +1,22 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
+import zio.blocks.chunk.Chunk
 import zio.blocks.schema.DynamicValue._
 import zio.blocks.schema.JavaTimeGen._
 import zio.test.Gen
@@ -17,7 +34,7 @@ object DynamicValueGen {
       Gen.float.map(PrimitiveValue.Float.apply),
       Gen.long.map(PrimitiveValue.Long.apply),
       Gen.short.map(PrimitiveValue.Short.apply),
-      Gen.char.filter(x => x >= ' ' && x <= 0xd800 || x >= 0xdfff).map(PrimitiveValue.Char.apply),
+      Gen.char.filter(x => x >= ' ' && (x < 0xd800 || x > 0xdfff)).map(PrimitiveValue.Char.apply),
       Gen.bigInt(BigInt(0), BigInt(1000000000)).map(PrimitiveValue.BigInt.apply),
       Gen.bigDecimal(BigDecimal(0), BigDecimal(1000000000)).map(PrimitiveValue.BigDecimal.apply),
       genDayOfWeek.map(PrimitiveValue.DayOfWeek.apply),
@@ -40,18 +57,22 @@ object DynamicValueGen {
       Gen.currency.map(PrimitiveValue.Currency.apply)
     )
 
-  // Depth-limited generators for Scala Native compatibility
+  // Null generator
+  val genNull: Gen[Any, DynamicValue.Null.type] = Gen.const(DynamicValue.Null)
+
+  // Depth-limited generators to keep test execution time manageable
   val genDynamicValue: Gen[Any, DynamicValue] = genDynamicValueWithDepth(2)
 
   private[this] def genDynamicValueWithDepth(maxDepth: Int): Gen[Any, DynamicValue] =
-    if (maxDepth <= 0) genPrimitiveValue.map(Primitive(_))
+    if (maxDepth <= 0) Gen.oneOf(genPrimitiveValue.map(Primitive(_)), genNull)
     else {
       Gen.oneOf(
         genPrimitiveValue.map(Primitive(_)),
         genRecordWithDepth(maxDepth - 1),
         genVariantWithDepth(maxDepth - 1),
         genSequenceWithDepth(maxDepth - 1),
-        genMapWithDepth(maxDepth - 1)
+        genMapWithDepth(maxDepth - 1),
+        genNull
       )
     }
 
@@ -65,7 +86,7 @@ object DynamicValueGen {
       } yield key -> value
     }
     .map(_.distinctBy(_._1)) // Now safe since all keys are non-empty strings
-    .map(f => Record(f.toVector))
+    .map(f => Record(Chunk.from(f)))
 
   val genVariant: Gen[Any, Variant] = genVariantWithDepth(2)
 
@@ -81,7 +102,7 @@ object DynamicValueGen {
       .listOfBounded(0, 5)(
         if (maxDepth <= 0) genPrimitiveValue.map(Primitive(_)) else genDynamicValueWithDepth(maxDepth)
       )
-      .map(f => Sequence(f.toVector))
+      .map(f => Sequence(Chunk.from(f)))
 
   val genAlphaNumericSequence: Gen[Any, Sequence] =
     Gen
@@ -93,7 +114,7 @@ object DynamicValueGen {
           )
           .map(Primitive(_))
       )
-      .map(f => Sequence(f.toVector))
+      .map(f => Sequence(Chunk.from(f)))
 
   val genMap: Gen[Any, DynamicValue.Map] = genMapWithDepth(2)
 
@@ -107,5 +128,5 @@ object DynamicValueGen {
         } yield key -> value
       }
       .map(_.distinctBy(_._1.value)) // Now safe since all keys are non-empty strings
-      .map(list => Map(list.toVector))
+      .map(list => Map(Chunk.from(list)))
 }

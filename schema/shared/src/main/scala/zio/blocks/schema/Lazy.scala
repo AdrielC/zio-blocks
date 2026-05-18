@@ -1,4 +1,23 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
+
+import zio.blocks.chunk.ChunkBuilder
+import scala.util.control.NonFatal
 
 sealed trait Lazy[+A] {
   import Lazy._
@@ -35,18 +54,17 @@ sealed trait Lazy[+A] {
   final def force: A = {
     @annotation.tailrec
     def loop(current: Lazy[Any], stack: List[Cont[Any, Any]]): Any = current match {
-      case Defer(thunk) =>
-        if (stack.isEmpty) thunk()
+      case d: Defer[Any @unchecked] =>
+        if (stack.isEmpty) d.thunk()
         else {
           val cont = stack.head
           loop(
-            try cont.ifSuccess(thunk())
-            catch { case e: Throwable => cont.ifError(e) },
+            try cont.ifSuccess(d.thunk())
+            catch { case e if NonFatal(e) => cont.ifError(e) },
             stack.tail
           )
         }
-      case FlatMap(first, cont) =>
-        loop(first, cont.asInstanceOf[Cont[Any, Any]] :: stack)
+      case fm: FlatMap[Any @unchecked, Any @unchecked] => loop(fm.first, fm.cont :: stack)
     }
 
     (if (value == null) {
@@ -55,7 +73,7 @@ sealed trait Lazy[+A] {
          value = loop(this, Nil)
          value
        } catch {
-         case e: Throwable =>
+         case e if NonFatal(e) =>
            error = e
            throw e
        }
@@ -84,17 +102,17 @@ sealed trait Lazy[+A] {
 }
 
 object Lazy {
-  private case class Cont[-A, +B](ifSuccess: A => Lazy[B], ifError: Throwable => Lazy[B])
+  private class Cont[-A, +B](val ifSuccess: A => Lazy[B], val ifError: Throwable => Lazy[B])
 
-  private case class Defer[+A](thunk: () => A) extends Lazy[A]
+  private class Defer[+A](val thunk: () => A) extends Lazy[A]
 
-  private case class FlatMap[A, +B](first: Lazy[A], cont: Cont[A, B]) extends Lazy[B]
+  private class FlatMap[A, +B](val first: Lazy[A], val cont: Cont[A, B]) extends Lazy[B]
 
   @inline def apply[A](expression: => A): Lazy[A] = new Defer(() => expression)
 
   def collectAll[A](values: IndexedSeq[Lazy[A]]): Lazy[IndexedSeq[A]] =
     values
-      .foldLeft(Lazy(IndexedSeq.newBuilder[A]))((lazyResult, lazyValue) =>
+      .foldLeft(Lazy(ChunkBuilder.make[A]()))((lazyResult, lazyValue) =>
         lazyValue.flatMap(value => lazyResult.map(_.addOne(value)))
       )
       .map(_.result())

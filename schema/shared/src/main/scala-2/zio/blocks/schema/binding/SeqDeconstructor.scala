@@ -1,6 +1,23 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.binding
 
 import scala.collection.immutable.ArraySeq
+import zio.blocks.chunk.Chunk
 
 trait SeqDeconstructor[C[_]] {
   def deconstruct[A](c: C[A]): Iterator[A]
@@ -33,25 +50,25 @@ object SeqDeconstructor {
     def charAt(c: C[Char], index: Int): Char
   }
 
-  val setDeconstructor: SeqDeconstructor[Set] = new SeqDeconstructor[Set] {
+  implicit val setDeconstructor: SeqDeconstructor[Set] = new SeqDeconstructor[Set] {
     def deconstruct[A](c: Set[A]): Iterator[A] = c.iterator
 
     def size[A](c: Set[A]): Int = c.size
   }
 
-  val listDeconstructor: SeqDeconstructor[List] = new SeqDeconstructor[List] {
+  implicit val listDeconstructor: SeqDeconstructor[List] = new SeqDeconstructor[List] {
     def deconstruct[A](c: List[A]): Iterator[A] = c.iterator
 
     def size[A](c: List[A]): Int = c.size
   }
 
-  val vectorDeconstructor: SeqDeconstructor[Vector] = new SeqDeconstructor[Vector] {
+  implicit val vectorDeconstructor: SeqDeconstructor[Vector] = new SeqDeconstructor[Vector] {
     def deconstruct[A](c: Vector[A]): Iterator[A] = c.iterator
 
     def size[A](c: Vector[A]): Int = c.length
   }
 
-  val arraySeqDeconstructor: SpecializedIndexed[ArraySeq] = new SpecializedIndexed[ArraySeq] {
+  implicit val arraySeqDeconstructor: SpecializedIndexed[ArraySeq] = new SpecializedIndexed[ArraySeq] {
     def deconstruct[A](c: ArraySeq[A]): Iterator[A] = c.iterator
 
     def elementType[A](c: ArraySeq[A]): RegisterType[A] = (c.unsafeArray match {
@@ -87,19 +104,26 @@ object SeqDeconstructor {
     def charAt(c: ArraySeq[Char], index: Int): Char = c(index)
   }
 
-  val indexedSeqDeconstructor: SeqDeconstructor[IndexedSeq] = new SeqDeconstructor[IndexedSeq] {
+  implicit val indexedSeqDeconstructor: SeqDeconstructor[IndexedSeq] = new SeqDeconstructor[IndexedSeq] {
     def deconstruct[A](c: IndexedSeq[A]): Iterator[A] = c.iterator
 
     def size[A](c: IndexedSeq[A]): Int = c.length
   }
 
-  val seqDeconstructor: SeqDeconstructor[collection.immutable.Seq] = new SeqDeconstructor[collection.immutable.Seq] {
-    def deconstruct[A](c: collection.immutable.Seq[A]): Iterator[A] = c.iterator
+  implicit val seqDeconstructor: SeqDeconstructor[collection.immutable.Seq] =
+    new SeqDeconstructor[collection.immutable.Seq] {
+      def deconstruct[A](c: collection.immutable.Seq[A]): Iterator[A] = c.iterator
 
-    def size[A](c: collection.immutable.Seq[A]): Int = c.size
+      def size[A](c: collection.immutable.Seq[A]): Int = c.size
+    }
+
+  implicit val chunkDeconstructor: SeqDeconstructor[Chunk] = new SeqDeconstructor[Chunk] {
+    def deconstruct[A](c: Chunk[A]): Iterator[A] = c.iterator
+
+    def size[A](c: Chunk[A]): Int = c.length
   }
 
-  val arrayDeconstructor: SpecializedIndexed[Array] = new SpecializedIndexed[Array] {
+  implicit val arrayDeconstructor: SpecializedIndexed[Array] = new SpecializedIndexed[Array] {
     def deconstruct[A](c: Array[A]): Iterator[A] = c.iterator
 
     def elementType[A](c: Array[A]): RegisterType[A] = c match {

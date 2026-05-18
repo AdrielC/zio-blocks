@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
 import scala.collection.mutable
@@ -8,6 +24,23 @@ private[schema] object CommonMacroOps {
   def fail(c: blackbox.Context)(msg: String): Nothing = c.abort(c.enclosingPosition, msg)
 
   def typeArgs(c: blackbox.Context)(tpe: c.Type): List[c.Type] = tpe.typeArgs.map(_.dealias)
+
+  def companion(c: blackbox.Context)(tpe: c.Type): c.Symbol = {
+    import c.universe._
+
+    val comp = tpe.typeSymbol.companion
+    if (comp.isModule) comp
+    else {
+      val ownerChainOf = (s: Symbol) => Iterator.iterate(s)(_.owner).takeWhile(_ != NoSymbol).toArray.reverseIterator
+      val path         = ownerChainOf(tpe.typeSymbol)
+        .zipAll(ownerChainOf(c.internal.enclosingOwner), NoSymbol, NoSymbol)
+        .dropWhile(x => x._1 == x._2)
+        .takeWhile(x => x._1 != NoSymbol)
+        .map(x => x._1.name.toTermName)
+      if (path.isEmpty) NoSymbol
+      else c.typecheck(path.foldLeft[Tree](Ident(path.next()))(Select(_, _)), silent = true).symbol
+    }
+  }
 
   def directSubTypes(c: blackbox.Context)(tpe: c.Type): List[c.Type] = {
     import c.universe._
@@ -41,21 +74,47 @@ private[schema] object CommonMacroOps {
       .sortInPlace()
       .foreach { symbol =>
         val classSymbol = symbol.asClass
-        var classType   = classSymbol.toType
+        // For modules (case objects), use the singleton type (.type) to preserve
+        // the specific type (e.g., Status.Active.type instead of Status)
+        var classType = if (classSymbol.isModuleClass) classSymbol.module.typeSignature else classSymbol.toType
         if (tpeTypeArgs ne Nil) {
           val typeParams = classSymbol.typeParams
-          classType = classType.substituteTypes(
-            typeParams,
-            typeParams.map { typeParam =>
-              tpeParamsAndArgs.get(typeParam.toString) match {
-                case Some(typeArg) => typeArg
-                case _             =>
-                  fail(c)(
-                    s"Type parameter '${typeParam.name}' of '$symbol' can't be deduced from type arguments of '$tpe'."
-                  )
+          if (typeParams.nonEmpty) {
+            // Get the child's base type of the parent sealed trait
+            // e.g., for VarStress[B] extends Stress[B], baseType(Stress) = Stress[B]
+            val childBaseType     = classType.baseType(tpeClass)
+            val childBaseTypeArgs = typeArgs(c)(childBaseType)
+
+            // Build mapping from child's type params to parent's type args
+            // by matching child's base type args with parent's type args
+            var childParamsToArgs = Map.empty[String, Type]
+            childBaseTypeArgs.zip(tpeTypeArgs).foreach { case (baseArg, parentArg) =>
+              baseArg match {
+                case TypeRef(_, sym, Nil) if sym.isType =>
+                  childParamsToArgs = childParamsToArgs.updated(sym.name.toString, parentArg)
+                case _ =>
+                // baseArg is a concrete type, not a type param - no mapping needed
               }
             }
-          )
+
+            classType = classType.substituteTypes(
+              typeParams,
+              typeParams.map { typeParam =>
+                childParamsToArgs.get(typeParam.name.toString) match {
+                  case Some(typeArg) => typeArg
+                  case _             =>
+                    // Fall back to parent's mapping for shared type params
+                    tpeParamsAndArgs.get(typeParam.toString) match {
+                      case Some(typeArg) => typeArg
+                      case _             =>
+                        fail(c)(
+                          s"Type parameter '${typeParam.name}' of '$symbol' can't be deduced from type arguments of '$tpe'."
+                        )
+                    }
+                }
+              }
+            )
+          }
         }
         subTypes.addOne(classType)
       }

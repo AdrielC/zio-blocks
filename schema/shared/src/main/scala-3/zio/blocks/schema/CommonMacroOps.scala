@@ -1,7 +1,23 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
+import scala.annotation.tailrec
 import scala.collection.mutable
-import scala.collection.mutable.ListBuffer
 import scala.quoted._
 
 private[schema] object CommonMacroOps {
@@ -19,6 +35,126 @@ private[schema] object CommonMacroOps {
       case _                    => Nil
     }
   }
+
+  def isProductType(using q: Quotes)(symbol: q.reflect.Symbol): Boolean = {
+    import q.reflect._
+
+    symbol.flags.is(Flags.Case) && !symbol.flags.is(Flags.Abstract)
+  }
+
+  def isSealedTraitOrAbstractClass(using q: Quotes)(tpe: q.reflect.TypeRepr): Boolean = {
+    import q.reflect._
+
+    tpe.classSymbol.fold(false) { symbol =>
+      val flags = symbol.flags
+      flags.is(Flags.Sealed) && (flags.is(Flags.Abstract) || flags.is(Flags.Trait))
+    }
+  }
+
+  def isNonAbstractScalaClass(using q: Quotes)(tpe: q.reflect.TypeRepr): Boolean = {
+    import q.reflect._
+
+    tpe.classSymbol.fold(false) { symbol =>
+      val flags = symbol.flags
+      !(flags.is(Flags.Abstract) || flags.is(Flags.JavaDefined) || flags.is(Flags.Trait))
+    }
+  }
+
+  def isEnumValue(using q: Quotes)(tpe: q.reflect.TypeRepr): Boolean = {
+    import q.reflect._
+
+    tpe.termSymbol.flags.is(Flags.Enum)
+  }
+
+  def isEnumOrModuleValue(using q: Quotes)(tpe: q.reflect.TypeRepr): Boolean = {
+    import q.reflect._
+
+    isEnumValue(tpe) || tpe.typeSymbol.flags.is(Flags.Module)
+  }
+
+  def isNamedTuple(using q: Quotes)(tpe: q.reflect.TypeRepr): Boolean = {
+    import q.reflect._
+
+    tpe match {
+      case AppliedType(ntTpe, _) => ntTpe.typeSymbol.fullName == "scala.NamedTuple$.NamedTuple"
+      case _                     => false
+    }
+  }
+
+  def isOpaque(using q: Quotes)(tpe: q.reflect.TypeRepr): Boolean = {
+    import q.reflect._
+
+    tpe.typeSymbol.flags.is(Flags.Opaque)
+  }
+
+  def opaqueDealias(using q: Quotes)(tpe: q.reflect.TypeRepr): q.reflect.TypeRepr = {
+    import q.reflect._
+
+    @tailrec
+    def loop(tpe: TypeRepr): TypeRepr = tpe match {
+      case trTpe: TypeRef =>
+        if (trTpe.isOpaqueAlias) loop(trTpe.translucentSuperType.dealias)
+        else tpe
+      case AppliedType(atTpe, _)   => loop(atTpe.dealias)
+      case TypeLambda(_, _, tlTpe) => loop(tlTpe.dealias)
+      case _                       => tpe
+    }
+
+    val sTpe = loop(tpe)
+    if (sTpe =:= tpe) fail(s"Cannot dealias opaque type: ${tpe.show}.")
+    sTpe
+  }
+
+  def isZioPreludeNewtype(using q: Quotes)(tpe: q.reflect.TypeRepr): Boolean = {
+    import q.reflect._
+
+    tpe match {
+      case TypeRef(compTpe, "Type") => compTpe.baseClasses.exists(_.fullName == "zio.prelude.Newtype")
+      case _                        => false
+    }
+  }
+
+  def zioPreludeNewtypeDealias(using q: Quotes)(tpe: q.reflect.TypeRepr): q.reflect.TypeRepr = {
+    import q.reflect._
+
+    tpe match {
+      case TypeRef(compTpe, _) =>
+        compTpe.baseClasses.find(_.fullName == "zio.prelude.Newtype") match {
+          case Some(cls) => compTpe.baseType(cls).typeArgs.head.dealias
+          case _         => fail(s"Cannot dealias zio-prelude newtype: ${tpe.show}.")
+        }
+      case _ => fail(s"Cannot dealias zio-prelude newtype: ${tpe.show}.")
+    }
+  }
+
+  def isTypeRef(using q: Quotes)(tpe: q.reflect.TypeRepr): Boolean = {
+    import q.reflect._
+
+    tpe match {
+      case trTpe: TypeRef =>
+        val typeSymbol = trTpe.typeSymbol
+        typeSymbol.isTypeDef && typeSymbol.isAliasType
+      case _ => false
+    }
+  }
+
+  def typeRefDealias(using q: Quotes)(tpe: q.reflect.TypeRepr): q.reflect.TypeRepr = {
+    import q.reflect._
+
+    tpe match {
+      case trTpe: TypeRef =>
+        val sTpe = trTpe.translucentSuperType.dealias
+        if (sTpe == trTpe) fail(s"Cannot dealias type reference: ${tpe.show}.")
+        sTpe
+      case _ => fail(s"Cannot dealias type reference: ${tpe.show}.")
+    }
+  }
+
+  def dealiasOnDemand(using q: Quotes)(tpe: q.reflect.TypeRepr): q.reflect.TypeRepr =
+    if (isOpaque(tpe)) opaqueDealias(tpe)
+    else if (isZioPreludeNewtype(tpe)) zioPreludeNewtypeDealias(tpe)
+    else if (isTypeRef(tpe)) typeRefDealias(tpe)
+    else tpe
 
   def isGenericTuple(using q: Quotes)(tpe: q.reflect.TypeRepr): Boolean = {
     import q.reflect._
@@ -67,15 +203,20 @@ private[schema] object CommonMacroOps {
     import q.reflect._
 
     val seen  = new mutable.HashSet[TypeRepr]
-    val types = new ListBuffer[TypeRepr]
+    val types = new mutable.ListBuffer[TypeRepr]
 
     def loop(tpe: TypeRepr): Unit = tpe.dealias match {
-      case OrType(left, right) => loop(left); loop(right)
-      case dealiased           => if (seen.add(dealiased)) types.addOne(dealiased)
+      case OrType(left, right) =>
+        loop(left)
+        loop(right)
+      case dealiased => if (seen.add(dealiased)) types.addOne(dealiased)
     }
 
     loop(tpe)
-    types.toList
+    // Sort by full type symbol name to ensure consistent ordering across macro
+    // contexts. The OrType tree structure can differ when types pass through
+    // quotes, so we need a stable sort key that doesn't depend on tree structure.
+    types.toList.sortBy(_.typeSymbol.fullName)
   }
 
   def directSubTypes(using q: Quotes)(tpe: q.reflect.TypeRepr): List[q.reflect.TypeRepr] = {
@@ -109,4 +250,5 @@ private[schema] object CommonMacroOps {
     if (tpe <:< TypeRepr.of[Option[?]]) subTypes.sortBy(_.typeSymbol.fullName)
     else subTypes
   }
+
 }

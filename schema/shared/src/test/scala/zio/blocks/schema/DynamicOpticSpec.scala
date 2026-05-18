@@ -1,11 +1,38 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
+import zio.blocks.chunk.Chunk
 import zio.blocks.schema.binding.Binding
-import zio.test.Assertion.{equalTo, isNone, isSome}
-import zio.test.{Spec, TestEnvironment, ZIOSpecDefault, assert}
+import zio.blocks.typeid.TypeId
+import zio.test.Assertion.{equalTo, isNone, isRight, isSome}
+import zio.test.{Spec, TestEnvironment, assert}
 
-object DynamicOpticSpec extends ZIOSpecDefault {
+object DynamicOpticSpec extends SchemaBaseSpec {
   def spec: Spec[TestEnvironment, Any] = suite("DynamicOpticSpec")(
+    test("path interpolator matches manual DynamicOptic construction") {
+      assert(p"<X>.y")(equalTo(A.x(X.y).toDynamic)) &&
+      assert(p"<X>.y.z")(equalTo(A.x(X.y)(Y.z).toDynamic)) &&
+      assert(p"[0]")(equalTo(DynamicOptic.root.at(0))) &&
+      assert(p"[0,1,2]")(equalTo(DynamicOptic.root.atIndices(0, 1, 2))) &&
+      assert(p"[*]")(equalTo(DynamicOptic.elements)) &&
+      assert(p"{*:}")(equalTo(DynamicOptic.mapKeys)) &&
+      assert(p"{*}")(equalTo(DynamicOptic.mapValues))
+    },
     test("composition using apply, field, caseOf, at, atKey, elements, mapKeys, and mapValues methods") {
       assert(
         DynamicOptic.root
@@ -16,12 +43,14 @@ object DynamicOpticSpec extends ZIOSpecDefault {
       assert(
         DynamicOptic.root
           .apply(DynamicOptic(Vector(DynamicOptic.Node.AtIndex(0))))
-          .apply(DynamicOptic(Vector(DynamicOptic.Node.AtMapKey("Z"))))
+          .apply(DynamicOptic(Vector(DynamicOptic.Node.AtMapKey(Schema[String].toDynamicValue("Z")))))
       )(equalTo(DynamicOptic.root.at(0).atKey("Z"))) &&
       assert(
         DynamicOptic.root
           .apply(DynamicOptic(Vector(DynamicOptic.Node.AtIndices(Seq(0, 1, 2)))))
-          .apply(DynamicOptic(Vector(DynamicOptic.Node.AtMapKeys(Seq("X", "Y", "Z")))))
+          .apply(
+            DynamicOptic(Vector(DynamicOptic.Node.AtMapKeys(Seq("X", "Y", "Z").map(Schema[String].toDynamicValue))))
+          )
       )(equalTo(DynamicOptic.root.atIndices(0, 1, 2).atKeys("X", "Y", "Z"))) &&
       assert(DynamicOptic.root.elements.mapKeys.mapValues.wrapped)(
         equalTo(
@@ -70,15 +99,131 @@ object DynamicOpticSpec extends ZIOSpecDefault {
       assert(DynamicOptic.wrapped.apply(Schema[A].reflect): Option[Any])(isNone)
     },
     test("toString returns a path") {
-      assert(A.x.toDynamic.toString)(equalTo(".when[X]")) &&
-      assert(A.x(X.y).toDynamic.toString)(equalTo(".when[X].y")) &&
-      assert(A.x(X.y)(Y.z).toDynamic.toString)(equalTo(".when[X].y.z")) &&
-      assert(DynamicOptic.root.at(0).atKey("Z").toString)(equalTo(".at(0).atKey(<key>)")) &&
+      assert(A.x.toDynamic.toString)(equalTo("<X>")) &&
+      assert(A.x(X.y).toDynamic.toString)(equalTo("<X>.y")) &&
+      assert(A.x(X.y)(Y.z).toDynamic.toString)(equalTo("<X>.y.z")) &&
+      assert(DynamicOptic.root.at(0).atKey("Z").toString)(equalTo("[0]{\"Z\"}")) &&
       assert(DynamicOptic.root.atIndices(0, 1, 2).atKeys("X", "Y", "Z").toString)(
-        equalTo(".atIndices(<indices>).atKeys(<keys>)")
+        equalTo("[0,1,2]{\"X\", \"Y\", \"Z\"}")
       ) &&
-      assert(DynamicOptic.root.elements.mapKeys.mapValues.wrapped.toString)(equalTo(".each.eachKey.eachValue.wrapped"))
-    }
+      assert(DynamicOptic.root.elements.mapKeys.mapValues.wrapped.toString)(equalTo("[*]{*:}{*}.~"))
+    },
+    test("toString returns dot for empty optic") {
+      assert(DynamicOptic.root.toString)(equalTo("."))
+    },
+    test("toScalaString returns Scala method syntax") {
+      assert(A.x.toDynamic.toScalaString)(equalTo(".when[X]")) &&
+      assert(A.x(X.y).toDynamic.toScalaString)(equalTo(".when[X].y")) &&
+      assert(DynamicOptic.root.at(0).toScalaString)(equalTo(".at(0)")) &&
+      assert(DynamicOptic.root.atIndices(0, 1, 2).toScalaString)(equalTo(".atIndices(0, 1, 2)")) &&
+      assert(DynamicOptic.root.atKey("Z").toScalaString)(equalTo(".atKey(\"Z\")")) &&
+      assert(DynamicOptic.root.atKeys("X", "Y").toScalaString)(equalTo(".atKeys(\"X\", \"Y\")")) &&
+      assert(DynamicOptic.elements.toScalaString)(equalTo(".each")) &&
+      assert(DynamicOptic.mapKeys.toScalaString)(equalTo(".eachKey")) &&
+      assert(DynamicOptic.mapValues.toScalaString)(equalTo(".eachValue")) &&
+      assert(DynamicOptic.wrapped.toScalaString)(equalTo(".wrapped"))
+    },
+    test("toScalaString returns dot for empty optic") {
+      assert(DynamicOptic.root.toScalaString)(equalTo("."))
+    },
+    test("toString handles special characters in string keys") {
+      assert(DynamicOptic.root.atKey("hello\nworld").toString)(equalTo("{\"hello\\nworld\"}")) &&
+      assert(DynamicOptic.root.atKey("tab\there").toString)(equalTo("{\"tab\\there\"}")) &&
+      assert(DynamicOptic.root.atKey("quote\"test").toString)(equalTo("{\"quote\\\"test\"}"))
+    },
+    test("toString handles numeric primitive keys") {
+      assert(DynamicOptic.root.atKey(42).toString)(equalTo("{42}")) &&
+      assert(DynamicOptic.root.atKey(123L).toString)(equalTo("{123}")) &&
+      assert(DynamicOptic.root.atKey(true).toString)(equalTo("{true}"))
+    },
+    test("toString handles byte, short, float, double primitive keys") {
+      assert(DynamicOptic.root.atKey(42.toByte).toString)(equalTo("{42}")) &&
+      assert(DynamicOptic.root.atKey(123.toShort).toString)(equalTo("{123}")) &&
+      assert(DynamicOptic.root.atKey(2.718).toString)(equalTo("{2.718}"))
+    },
+    test("toString handles other primitive keys via fallback") {
+      assert(DynamicOptic.root.atKey(BigDecimal("123.456")).toString)(equalTo("{123.456}")) &&
+      assert(DynamicOptic.root.atKey('A').toString)(equalTo("{'A'}"))
+    },
+    test("search builder creates TypeSearch node") {
+      val optic = DynamicOptic.root.search[X]
+      assert(optic.nodes.length)(equalTo(1)) &&
+      assert(optic.nodes.head.isInstanceOf[DynamicOptic.Node.TypeSearch])(equalTo(true))
+    },
+    test("searchSchema builder creates SchemaSearch node") {
+      val repr  = SchemaRepr.Nominal("Person")
+      val optic = DynamicOptic.root.searchSchema(repr)
+      assert(optic.nodes.length)(equalTo(1)) &&
+      assert(optic.nodes.head)(equalTo(DynamicOptic.Node.SchemaSearch(repr)))
+    },
+    test("toString renders TypeSearch as #TypeName") {
+      assert(DynamicOptic.root.search[X].toString)(equalTo("#X"))
+    },
+    test("toString renders SchemaSearch with schema syntax") {
+      val repr = SchemaRepr.Record(Chunk("name" -> SchemaRepr.Primitive("string")))
+      assert(DynamicOptic.root.searchSchema(repr).toString)(equalTo("#record { name: string }"))
+    },
+    test("toString renders SchemaSearch for primitive") {
+      val repr = SchemaRepr.Primitive("string")
+      assert(DynamicOptic.root.searchSchema(repr).toString)(equalTo("#string"))
+    },
+    test("toScalaString renders TypeSearch as .search[TypeName]") {
+      assert(DynamicOptic.root.search[X].toScalaString)(equalTo(".search[X]"))
+    },
+    test("toScalaString renders SchemaSearch with schema repr") {
+      val repr = SchemaRepr.Nominal("Person")
+      assert(DynamicOptic.root.searchSchema(repr).toScalaString)(equalTo(".searchSchema(Person)"))
+    },
+    test("search composes with other optics") {
+      assert(DynamicOptic.root.field("x").search[Y].field("z").toString)(equalTo(".x#Y.z")) &&
+      assert(DynamicOptic.root.field("x").search[Y].field("z").toScalaString)(equalTo(".x.search[Y].z"))
+    },
+    test("searchSchema composes with other optics") {
+      val repr = SchemaRepr.Primitive("int")
+      assert(DynamicOptic.root.elements.searchSchema(repr).toString)(equalTo("[*]#int")) &&
+      assert(DynamicOptic.root.elements.searchSchema(repr).toScalaString)(equalTo(".each.searchSchema(int)"))
+    },
+    suite("Schema roundtrip")(
+      test("TypeSearch node roundtrips through DynamicValue") {
+        val node = DynamicOptic.Node.TypeSearch(TypeId.of[X])
+        val dv   = Schema[DynamicOptic.Node].toDynamicValue(node)
+        assert(Schema[DynamicOptic.Node].fromDynamicValue(dv))(isRight(equalTo(node: DynamicOptic.Node)))
+      },
+      test("SchemaSearch node roundtrips through DynamicValue") {
+        val node = DynamicOptic.Node.SchemaSearch(SchemaRepr.Nominal("Person"))
+        val dv   = Schema[DynamicOptic.Node].toDynamicValue(node)
+        assert(Schema[DynamicOptic.Node].fromDynamicValue(dv))(isRight(equalTo(node: DynamicOptic.Node)))
+      },
+      test("SchemaSearch node with complex SchemaRepr roundtrips through DynamicValue") {
+        val repr = SchemaRepr.Record(
+          Chunk("name" -> SchemaRepr.Primitive("string"), "age" -> SchemaRepr.Primitive("int"))
+        )
+        val node = DynamicOptic.Node.SchemaSearch(repr)
+        val dv   = Schema[DynamicOptic.Node].toDynamicValue(node)
+        assert(Schema[DynamicOptic.Node].fromDynamicValue(dv))(isRight(equalTo(node: DynamicOptic.Node)))
+      },
+      test("DynamicOptic with TypeSearch node roundtrips through DynamicValue") {
+        val optic = DynamicOptic.root.search[X]
+        val dv    = Schema[DynamicOptic].toDynamicValue(optic)
+        assert(Schema[DynamicOptic].fromDynamicValue(dv))(isRight(equalTo(optic)))
+      },
+      test("DynamicOptic with SchemaSearch node roundtrips through DynamicValue") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("string"))
+        val dv    = Schema[DynamicOptic].toDynamicValue(optic)
+        assert(Schema[DynamicOptic].fromDynamicValue(dv))(isRight(equalTo(optic)))
+      },
+      test("DynamicOptic with search composed with field roundtrips through DynamicValue") {
+        val optic = DynamicOptic.root.field("x").search[Y].field("z")
+        val dv    = Schema[DynamicOptic].toDynamicValue(optic)
+        assert(Schema[DynamicOptic].fromDynamicValue(dv))(isRight(equalTo(optic)))
+      },
+      test("DynamicOptic with searchSchema composed with elements roundtrips through DynamicValue") {
+        val repr  = SchemaRepr.Map(SchemaRepr.Primitive("string"), SchemaRepr.Nominal("Person"))
+        val optic = DynamicOptic.root.elements.searchSchema(repr)
+        val dv    = Schema[DynamicOptic].toDynamicValue(optic)
+        assert(Schema[DynamicOptic].fromDynamicValue(dv))(isRight(equalTo(optic)))
+      }
+    )
   )
 
   sealed trait A
@@ -106,14 +251,16 @@ object DynamicOpticSpec extends ZIOSpecDefault {
   case class PosInt private (value: Int) extends AnyVal
 
   object PosInt extends CompanionOptics[PosInt] {
-    def apply(value: Int): Either[String, PosInt] =
+    def apply(value: Int): Either[SchemaError, PosInt] =
       if (value >= 0) new Right(new PosInt(value))
-      else new Left("Expected positive value")
+      else new Left(SchemaError.validationFailed("Expected positive value"))
 
     def applyUnsafe(value: Int): PosInt =
       if (value >= 0) new PosInt(value)
       else throw new IllegalArgumentException("Expected positive value")
 
-    implicit val schema: Schema[PosInt] = Schema.derived.wrap(PosInt.apply, _.value)
+    implicit lazy val typeId: TypeId[PosInt] = TypeId.of[PosInt]
+    implicit lazy val schema: Schema[PosInt] =
+      Schema[Int].transform[PosInt](PosInt.applyUnsafe, _.value)
   }
 }

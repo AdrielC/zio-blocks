@@ -1,0 +1,85 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package zio.http.schema
+
+import zio.blocks.chunk.Chunk
+import zio.blocks.schema.Schema
+import zio.http.{Header, Headers}
+
+final class HeadersSchemaOps(private val headers: Headers) extends AnyVal {
+
+  def header[T](name: String)(implicit schema: Schema[T]): Either[HeaderError, T] =
+    headers.rawGet(name) match {
+      case None      => Left(HeaderError.Missing(name))
+      case Some(raw) => StringDecoder.decode(raw, schema).left.map(e => HeaderError.Malformed(name, raw, e))
+    }
+
+  /**
+   * Decodes the first matching header with a [[Header.Codec]].
+   *
+   * Returns [[HeaderError.Missing]] when the header is absent and
+   * [[HeaderError.Malformed]] when parsing fails.
+   */
+  def header[A](headerCodec: Header.Codec[A]): Either[HeaderError, A] =
+    headers.rawGet(headerCodec.name) match {
+      case None      => Left(HeaderError.Missing(headerCodec.name))
+      case Some(raw) => headerCodec.parse(raw).left.map(e => HeaderError.Malformed(headerCodec.name, raw, e))
+    }
+
+  def headerAll[T](name: String)(implicit schema: Schema[T]): Either[HeaderError, Chunk[T]] = {
+    val values = headers.rawGetAll(name)
+    if (values.isEmpty) Left(HeaderError.Missing(name))
+    else {
+      val builder = Chunk.newBuilder[T]
+      var i       = 0
+      while (i < values.length) {
+        StringDecoder.decode(values(i), schema) match {
+          case Right(v) => builder += v
+          case Left(e)  => return Left(HeaderError.Malformed(name, values(i), e))
+        }
+        i += 1
+      }
+      Right(builder.result())
+    }
+  }
+
+  /**
+   * Decodes all matching headers with a [[Header.Codec]].
+   *
+   * Decoding preserves header order and short-circuits on the first malformed
+   * value.
+   */
+  def headerAll[A](headerCodec: Header.Codec[A]): Either[HeaderError, Chunk[A]] = {
+    val values = headers.rawGetAll(headerCodec.name)
+    if (values.isEmpty) Left(HeaderError.Missing(headerCodec.name))
+    else {
+      val builder = Chunk.newBuilder[A]
+      var i       = 0
+      while (i < values.length) {
+        headerCodec.parse(values(i)) match {
+          case Right(value) => builder += value
+          case Left(error)  => return Left(HeaderError.Malformed(headerCodec.name, values(i), error))
+        }
+        i += 1
+      }
+      Right(builder.result())
+    }
+  }
+
+  def headerOrElse[T](name: String, default: => T)(implicit schema: Schema[T]): T =
+    header[T](name).getOrElse(default)
+}

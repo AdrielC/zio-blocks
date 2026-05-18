@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.json
 
 import java.io.OutputStream
@@ -5,8 +21,11 @@ import java.math.BigInteger
 import java.nio.{BufferOverflowException, ByteBuffer}
 import java.time._
 import java.util.UUID
+import zio.blocks.schema.binding.{Registers, RegisterOffset}
+import zio.blocks.schema.binding.RegisterOffset.RegisterOffset
 import zio.blocks.schema.json.JsonWriter._
 import scala.annotation.tailrec
+import java.nio.charset.StandardCharsets.UTF_8
 import java.lang.Long.compareUnsigned
 
 /**
@@ -18,29 +37,38 @@ import java.lang.Long.compareUnsigned
  *   the current position in the internal buffer
  * @param limit
  *   the last position in the internal buffer
+ * @param stack
+ *   a pre-allocated stack of registers
+ * @param top
+ *   an offset of the stack top
+ * @param maxTop
+ *   a maximum offset of the stack top
+ * @param config
+ *   a writer configuration
  * @param indention
  *   the current indention level
  * @param comma
- *   a flag indicating if the next element should be preceded by comma
+ *   a flag indicating if comma should precede the next element
  * @param disableBufGrowing
  *   a flag indicating if growing of the internal buffer is disabled
  * @param bbuf
  *   a byte buffer for writing JSON data
  * @param out
  *   the output stream for writing JSON data
- * @param config
- *   a writer configuration
  */
 final class JsonWriter private[json] (
   private[this] var buf: Array[Byte] = new Array[Byte](32768),
   private[this] var count: Int = 0,
   private[this] var limit: Int = 32768,
+  private[this] val stack: Registers = Registers(RegisterOffset(objects = 64, ints = 64)),
+  private[this] var top: RegisterOffset = -1L,
+  private[this] var maxTop: RegisterOffset = 0L,
+  private[this] var config: WriterConfig = null,
   private[this] var indention: Int = 0,
   private[this] var comma: Boolean = false,
   private[this] var disableBufGrowing: Boolean = false,
   private[this] var bbuf: ByteBuffer = null,
-  private[this] var out: OutputStream = null,
-  private[this] var config: WriterConfig = null
+  private[this] var out: OutputStream = null
 ) {
 
   /**
@@ -74,8 +102,8 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Char` value to write
-   * @throws JsonWriterException
-   *   in case of `Char` value is a part of surrogate pair
+   * @throws JsonCodecError
+   *   in the case of `Char` value is a part of the surrogate pair
    */
   def writeKey(x: Char): Unit = {
     writeOptionalCommaAndIndentionBeforeKey()
@@ -97,7 +125,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a `Int` value as a JSON key.
+   * Writes an `Int` value as a JSON key.
    *
    * @param x
    *   the `Int` value to write
@@ -127,7 +155,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Float` value to write
-   * @throws JsonWriterException
+   * @throws JsonCodecError
    *   if the value is non-finite
    */
   def writeKey(x: Float): Unit = {
@@ -142,7 +170,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Double` value to write
-   * @throws JsonWriterException
+   * @throws JsonCodecError
    *   if the value is non-finite
    */
   def writeKey(x: Double): Unit = {
@@ -203,7 +231,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `String` value to write
-   * @throws JsonWriterException
+   * @throws JsonCodecError
    *   if the provided string has an illegal surrogate pair
    */
   def writeKey(x: String): Unit = {
@@ -238,7 +266,7 @@ final class JsonWriter private[json] (
    *
    * @note
    *   Use [[JsonWriter.isNonEscapedAscii]] for validation if the string is
-   *   eligable for writing by this method.
+   *   eligible for writing by this method.
    *
    * @param x
    *   the `String` value to write
@@ -259,11 +287,11 @@ final class JsonWriter private[json] (
       }
       buf(pos) = '"'
       pos += 1
-      var i = 0
-      while (i < len) {
-        buf(pos) = x.charAt(i).toByte
+      var idx = 0
+      while (idx < len) {
+        buf(pos) = x.charAt(idx).toByte
         pos += 1
-        i += 1
+        idx += 1
       }
       buf(pos) = '"'
       buf(pos + 1) = ':'
@@ -285,7 +313,7 @@ final class JsonWriter private[json] (
   def writeKey(x: Duration): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeKey()
-    writeDuration(x)
+    writeDuration(x, false)
     writeColon()
   }
 
@@ -298,7 +326,7 @@ final class JsonWriter private[json] (
   def writeKey(x: Instant): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeKey()
-    writeInstant(x)
+    writeInstant(x, false)
     writeColon()
   }
 
@@ -311,7 +339,7 @@ final class JsonWriter private[json] (
   def writeKey(x: LocalDate): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeKey()
-    writeLocalDate(x)
+    writeLocalDate(x, false)
     writeColon()
   }
 
@@ -324,7 +352,7 @@ final class JsonWriter private[json] (
   def writeKey(x: LocalDateTime): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeKey()
-    writeLocalDateTime(x)
+    writeLocalDateTime(x, false)
     writeColon()
   }
 
@@ -337,7 +365,7 @@ final class JsonWriter private[json] (
   def writeKey(x: LocalTime): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeKey()
-    writeLocalTime(x)
+    writeLocalTime(x, false)
     writeColon()
   }
 
@@ -350,7 +378,7 @@ final class JsonWriter private[json] (
   def writeKey(x: MonthDay): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeKey()
-    writeMonthDay(x)
+    writeMonthDay(x, false)
     writeColon()
   }
 
@@ -363,7 +391,7 @@ final class JsonWriter private[json] (
   def writeKey(x: OffsetDateTime): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeKey()
-    writeOffsetDateTime(x)
+    writeOffsetDateTime(x, false)
     writeColon()
   }
 
@@ -376,7 +404,7 @@ final class JsonWriter private[json] (
   def writeKey(x: OffsetTime): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeKey()
-    writeOffsetTime(x)
+    writeOffsetTime(x, false)
     writeColon()
   }
 
@@ -389,7 +417,7 @@ final class JsonWriter private[json] (
   def writeKey(x: Period): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeKey()
-    writePeriod(x)
+    writePeriod(x, false)
     writeColon()
   }
 
@@ -428,7 +456,7 @@ final class JsonWriter private[json] (
   def writeKey(x: ZonedDateTime): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeKey()
-    writeZonedDateTime(x)
+    writeZonedDateTime(x, false)
     writeColon()
   }
 
@@ -458,15 +486,19 @@ final class JsonWriter private[json] (
     writeColon()
   }
 
-  /**
-   * Throws a [[JsonBinaryCodecError]] with the given error message.
-   *
-   * @param msg
-   *   the error message
-   * @throws JsonBinaryCodecError
-   *   always
-   */
-  def encodeError(msg: String): Nothing = throw new JsonBinaryCodecError(Nil, msg)
+  def push(offset: RegisterOffset): RegisterOffset = {
+    val top = this.top
+    this.top = top + offset
+    maxTop = Math.max(maxTop, this.top)
+    top
+  }
+
+  def pop(offset: RegisterOffset): Unit = top -= offset
+
+  def registers: Registers = this.stack
+
+  @noinline
+  private[this] def encodeError(msg: String): Nothing = throw new JsonCodecError(Nil, msg)
 
   /**
    * Writes a `BigDecimal` value as a JSON value.
@@ -514,7 +546,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `String` value to write
-   * @throws JsonWriterException
+   * @throws JsonCodecError
    *   if the provided string has an illegal surrogate pair
    */
   def writeVal(x: String): Unit = {
@@ -540,7 +572,7 @@ final class JsonWriter private[json] (
    *
    * @note
    *   Use [[JsonWriter.isNonEscapedAscii]] for validation if the string is
-   *   eligable for writing by this method.
+   *   eligible for writing by this method.
    *
    * @param x
    *   the `String` value to write
@@ -560,11 +592,11 @@ final class JsonWriter private[json] (
       } else comma = true
       buf(pos) = '"'
       pos += 1
-      var i = 0
-      while (i < len) {
-        buf(pos) = x.charAt(i).toByte
+      var idx = 0
+      while (idx < len) {
+        buf(pos) = x.charAt(idx).toByte
         pos += 1
-        i += 1
+        idx += 1
       }
       buf(pos) = '"'
       count = pos + 1
@@ -580,7 +612,7 @@ final class JsonWriter private[json] (
   def writeVal(x: Duration): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeValue()
-    writeDuration(x)
+    writeDuration(x, false)
   }
 
   /**
@@ -592,7 +624,7 @@ final class JsonWriter private[json] (
   def writeVal(x: Instant): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeValue()
-    writeInstant(x)
+    writeInstant(x, false)
   }
 
   /**
@@ -604,7 +636,7 @@ final class JsonWriter private[json] (
   def writeVal(x: LocalDate): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeValue()
-    writeLocalDate(x)
+    writeLocalDate(x, false)
   }
 
   /**
@@ -616,7 +648,7 @@ final class JsonWriter private[json] (
   def writeVal(x: LocalDateTime): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeValue()
-    writeLocalDateTime(x)
+    writeLocalDateTime(x, false)
   }
 
   /**
@@ -628,7 +660,7 @@ final class JsonWriter private[json] (
   def writeVal(x: LocalTime): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeValue()
-    writeLocalTime(x)
+    writeLocalTime(x, false)
   }
 
   /**
@@ -640,7 +672,7 @@ final class JsonWriter private[json] (
   def writeVal(x: MonthDay): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeValue()
-    writeMonthDay(x)
+    writeMonthDay(x, false)
   }
 
   /**
@@ -652,7 +684,7 @@ final class JsonWriter private[json] (
   def writeVal(x: OffsetDateTime): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeValue()
-    writeOffsetDateTime(x)
+    writeOffsetDateTime(x, false)
   }
 
   /**
@@ -664,7 +696,7 @@ final class JsonWriter private[json] (
   def writeVal(x: OffsetTime): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeValue()
-    writeOffsetTime(x)
+    writeOffsetTime(x, false)
   }
 
   /**
@@ -676,7 +708,7 @@ final class JsonWriter private[json] (
   def writeVal(x: Period): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeValue()
-    writePeriod(x)
+    writePeriod(x, false)
   }
 
   /**
@@ -712,7 +744,7 @@ final class JsonWriter private[json] (
   def writeVal(x: ZonedDateTime): Unit = {
     if (x eq null) throw new NullPointerException
     writeOptionalCommaAndIndentionBeforeValue()
-    writeZonedDateTime(x)
+    writeZonedDateTime(x, false)
   }
 
   /**
@@ -777,8 +809,8 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Char` value to write
-   * @throws JsonWriterException
-   *   in case of `Char` value is a part of surrogate pair
+   * @throws JsonCodecError
+   *   in the case of `Char` value is a part of the surrogate pair
    */
   def writeVal(x: Char): Unit = {
     writeOptionalCommaAndIndentionBeforeValue()
@@ -786,7 +818,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a `Int` value as a JSON value.
+   * Writes an `Int` value as a JSON value.
    *
    * @param x
    *   the `Int` value to write
@@ -812,7 +844,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Float` value to write
-   * @throws JsonWriterException
+   * @throws JsonCodecError
    *   if the value is non-finite
    */
   def writeVal(x: Float): Unit = {
@@ -825,7 +857,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Double` value to write
-   * @throws JsonWriterException
+   * @throws JsonCodecError
    *   if the value is non-finite
    */
   def writeVal(x: Double): Unit = {
@@ -906,7 +938,7 @@ final class JsonWriter private[json] (
   }
 
   /**
-   * Writes a `Int` value as a JSON string value.
+   * Writes an `Int` value as a JSON string value.
    *
    * @param x
    *   the `Int` value to write
@@ -936,7 +968,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Float` value to write
-   * @throws JsonWriterException
+   * @throws JsonCodecError
    *   if the value is non-finite
    */
   def writeValAsString(x: Float): Unit = {
@@ -951,7 +983,7 @@ final class JsonWriter private[json] (
    *
    * @param x
    *   the `Double` value to write
-   * @throws JsonWriterException
+   * @throws JsonCodecError
    *   if the value is non-finite
    */
   def writeValAsString(x: Double): Unit = {
@@ -959,6 +991,127 @@ final class JsonWriter private[json] (
     writeBytes('"')
     writeDouble(x)
     writeBytes('"')
+  }
+
+  /**
+   * Writes a byte array as a JSON raw value.
+   *
+   * @param bs
+   *   the byte array to write
+   */
+  def writeRawVal(bs: Array[Byte]): Unit = {
+    writeOptionalCommaAndIndentionBeforeValue()
+    writeRawBytes(bs)
+  }
+
+  /**
+   * Writes a [[java.time.Duration]] value as a JSON raw value.
+   *
+   * @param x
+   *   the [[java.time.Duration]] value to write
+   */
+  private[json] def writeRawVal(x: Duration): Unit = {
+    writeOptionalCommaAndIndentionBeforeValue()
+    writeDuration(x, true)
+  }
+
+  /**
+   * Writes a [[java.time.Instant]] value as a JSON raw value.
+   *
+   * @param x
+   *   the [[java.time.Instant]] value to write
+   */
+  private[json] def writeRawVal(x: Instant): Unit = {
+    writeOptionalCommaAndIndentionBeforeValue()
+    writeInstant(x, true)
+  }
+
+  /**
+   * Writes a [[java.time.LocalDate]] value as a JSON raw value.
+   *
+   * @param x
+   *   the [[java.time.LocalDate]] value to write
+   */
+  private[json] def writeRawVal(x: LocalDate): Unit = {
+    writeOptionalCommaAndIndentionBeforeValue()
+    writeLocalDate(x, true)
+  }
+
+  /**
+   * Writes a [[java.time.LocalDateTime]] value as a JSON raw value.
+   *
+   * @param x
+   *   the [[java.time.LocalDateTime]] value to write
+   */
+  private[json] def writeRawVal(x: LocalDateTime): Unit = {
+    writeOptionalCommaAndIndentionBeforeValue()
+    writeLocalDateTime(x, true)
+  }
+
+  /**
+   * Writes a [[java.time.LocalTime]] value as a JSON raw value.
+   *
+   * @param x
+   *   the [[java.time.LocalTime]] value to write
+   */
+  private[json] def writeRawVal(x: LocalTime): Unit = {
+    writeOptionalCommaAndIndentionBeforeValue()
+    writeLocalTime(x, true)
+  }
+
+  /**
+   * Writes a [[java.time.MonthDay]] value as a JSON raw value.
+   *
+   * @param x
+   *   the [[java.time.MonthDay]] value to write
+   */
+  private[json] def writeRawVal(x: MonthDay): Unit = {
+    writeOptionalCommaAndIndentionBeforeValue()
+    writeMonthDay(x, true)
+  }
+
+  /**
+   * Writes a [[java.time.OffsetDateTime]] value as a JSON raw value.
+   *
+   * @param x
+   *   the [[java.time.OffsetDateTime]] value to write
+   */
+  private[json] def writeRawVal(x: OffsetDateTime): Unit = {
+    writeOptionalCommaAndIndentionBeforeValue()
+    writeOffsetDateTime(x, true)
+  }
+
+  /**
+   * Writes a [[java.time.OffsetTime]] value as a JSON raw value.
+   *
+   * @param x
+   *   the [[java.time.OffsetTime]] value to write
+   */
+  private[json] def writeRawVal(x: OffsetTime): Unit = {
+    writeOptionalCommaAndIndentionBeforeValue()
+    writeOffsetTime(x, true)
+  }
+
+  /**
+   * Writes a [[java.time.Period]] value as a JSON raw value.
+   *
+   * @param x
+   *   the [[java.time.Period]] value to write
+   */
+  private[json] def writeRawVal(x: Period): Unit = {
+    writeOptionalCommaAndIndentionBeforeValue()
+    writePeriod(x, true)
+  }
+
+  /**
+   * Writes a [[java.time.ZonedDateTime]] value as a JSON raw value.
+   *
+   * @param x
+   *   the [[java.time.ZonedDateTime]] value to write
+   */
+  private[json] def writeRawVal(x: ZonedDateTime): Unit = {
+    writeOptionalCommaAndIndentionBeforeValue()
+    writeZonedDateTime(x, true)
   }
 
   /**
@@ -996,6 +1149,14 @@ final class JsonWriter private[json] (
   def writeObjectEnd(): Unit = writeNestedEnd('}')
 
   /**
+   * Indicates whether the writer is currently in use.
+   *
+   * @return
+   *   true if the writer is in use, false otherwise
+   */
+  private[json] def isInUse: Boolean = top >= 0
+
+  /**
    * Writes JSON-encoded value of type `A` to an output stream.
    *
    * @param codec
@@ -1007,20 +1168,24 @@ final class JsonWriter private[json] (
    * @param config
    *   the writer configuration
    */
-  private[json] def write[A](codec: JsonBinaryCodec[A], x: A, out: OutputStream, config: WriterConfig): Unit =
+  private[json] def write[A](codec: JsonCodec[A], x: A, out: OutputStream, config: WriterConfig): Unit =
     try {
-      this.out = out
-      this.config = config
+      top = 0
+      maxTop = 0
       count = 0
       indention = 0
       comma = false
       disableBufGrowing = false
+      this.out = out
+      this.config = config
       if (limit < config.preferredBufSize) reallocateBufToPreferredSize()
       codec.encodeValue(x, this)
       out.write(buf, 0, count)
     } finally {
       this.out = null // don't close output stream
       if (limit > config.preferredBufSize) reallocateBufToPreferredSize()
+      stack.clearObjects(maxTop)
+      top = -1
     }
 
   /**
@@ -1035,17 +1200,21 @@ final class JsonWriter private[json] (
    * @return
    *   the encoded JSON as a byte array
    */
-  private[json] def write[A](codec: JsonBinaryCodec[A], x: A, config: WriterConfig): Array[Byte] =
+  private[json] def write[A](codec: JsonCodec[A], x: A, config: WriterConfig): Array[Byte] =
     try {
-      this.config = config
+      top = 0
+      maxTop = 0
       count = 0
       indention = 0
       comma = false
       disableBufGrowing = false
+      this.config = config
       codec.encodeValue(x, this)
       java.util.Arrays.copyOf(buf, count)
     } finally {
       if (limit > config.preferredBufSize) reallocateBufToPreferredSize()
+      stack.clearObjects(maxTop)
+      top = -1
     }
 
   /**
@@ -1060,7 +1229,11 @@ final class JsonWriter private[json] (
    * @param config
    *   the writer configuration
    */
-  private[json] def write[A](codec: JsonBinaryCodec[A], x: A, bbuf: ByteBuffer, config: WriterConfig): Unit =
+  private[json] def write[A](codec: JsonCodec[A], x: A, bbuf: ByteBuffer, config: WriterConfig): Unit = {
+    top = 0
+    maxTop = 0
+    indention = 0
+    comma = false
     if (bbuf.hasArray) {
       val offset  = bbuf.arrayOffset
       val currBuf = this.buf
@@ -1069,8 +1242,6 @@ final class JsonWriter private[json] (
         this.config = config
         count = bbuf.position() + offset
         limit = bbuf.limit() + offset
-        indention = 0
-        comma = false
         disableBufGrowing = true
         codec.encodeValue(x, this)
       } catch {
@@ -1078,14 +1249,14 @@ final class JsonWriter private[json] (
       } finally {
         setBuf(currBuf)
         bbuf.position(count - offset)
+        stack.clearObjects(maxTop)
+        top = -1
       }
     } else {
       try {
         this.bbuf = bbuf
         this.config = config
         count = 0
-        indention = 0
-        comma = false
         disableBufGrowing = false
         if (limit < config.preferredBufSize) reallocateBufToPreferredSize()
         codec.encodeValue(x, this)
@@ -1093,7 +1264,39 @@ final class JsonWriter private[json] (
       } finally {
         this.bbuf = null
         if (limit > config.preferredBufSize) reallocateBufToPreferredSize()
+        stack.clearObjects(maxTop)
+        top = -1
       }
+    }
+  }
+
+  /**
+   * Encodes a value of type `A` to a string.
+   *
+   * @param codec
+   *   a JSON value codec for type `A`
+   * @param x
+   *   the value to encode
+   * @param config
+   *   the writer configuration
+   * @return
+   *   the encoded JSON as a string
+   */
+  private[json] def writeToString[A](codec: JsonCodec[A], x: A, config: WriterConfig): String =
+    try {
+      top = 0
+      maxTop = 0
+      count = 0
+      indention = 0
+      comma = false
+      disableBufGrowing = false
+      this.config = config
+      codec.encodeValue(x, this)
+      new String(buf, 0, count, UTF_8)
+    } finally {
+      if (limit > config.preferredBufSize) reallocateBufToPreferredSize()
+      stack.clearObjects(maxTop)
+      top = -1
     }
 
   @inline
@@ -1180,6 +1383,23 @@ final class JsonWriter private[json] (
     count = pos + 1
   }
 
+  @inline
+  private[this] def writeRawBytes(bs: Array[Byte]): Unit = {
+    var pos       = count
+    var step      = Math.max(config.preferredBufSize, limit - pos)
+    var remaining = bs.length
+    var offset    = 0
+    while (remaining > 0) {
+      step = Math.min(step, remaining)
+      if (pos + step > limit) pos = flushAndGrowBuf(step, pos)
+      System.arraycopy(bs, offset, buf, pos, step)
+      offset += step
+      pos += step
+      remaining -= step
+    }
+    count = pos
+  }
+
   private[this] def writeLongNonEscapedAsciiKey(x: String): Unit = {
     writeOptionalCommaAndIndentionBeforeKey()
     writeBytes('"')
@@ -1231,11 +1451,11 @@ final class JsonWriter private[json] (
     val buf = this.buf
     buf(pos) = '"'
     pos += 1
-    var i = 0
-    while (i < len) {
-      buf(pos) = s.charAt(i).toByte
+    var idx = 0
+    while (idx < len) {
+      buf(pos) = s.charAt(idx).toByte
       pos += 1
-      i += 1
+      idx += 1
     }
     buf(pos) = '"'
     count = pos + 1
@@ -1486,6 +1706,7 @@ final class JsonWriter private[json] (
     pos + 6
   }
 
+  @noinline
   private[this] def illegalSurrogateError(): Nothing = encodeError("illegal char sequence of surrogate pair")
 
   private[this] def writeBigInteger(x: BigInteger, ss: Array[BigInteger]): Unit = {
@@ -1517,13 +1738,12 @@ final class JsonWriter private[json] (
       val buf = this.buf
       val ds  = digits
       buf(pos) = 'E'
-      var sb: Byte = '+'
+      pos += 1
       if (exp < 0) {
-        sb = '-'
+        buf(pos) = '-'
+        pos += 1
         exp = -exp
       }
-      buf(pos + 1) = sb
-      pos += 2
       var q = exp.toInt
       if (exp == q) {
         pos += digitCount(q)
@@ -1674,15 +1894,18 @@ final class JsonWriter private[json] (
     count = pos
   }
 
-  private[this] def writeDuration(x: Duration): Unit = {
+  private[this] def writeDuration(x: Duration, isRaw: Boolean): Unit = {
     var pos       = ensureBufCapacity(40) // 40 == "PT-1111111111111111H-11M-11.111111111S".length + 2
     val buf       = this.buf
     var totalSecs = x.getSeconds
     var nano      = x.getNano
-    buf(pos) = '"'
-    buf(pos + 1) = 'P'
-    buf(pos + 2) = 'T'
-    pos += 3
+    if (!isRaw) {
+      buf(pos) = '"'
+      pos += 1
+    }
+    buf(pos) = 'P'
+    buf(pos + 1) = 'T'
+    pos += 2
     if (totalSecs == 0 && nano == 0) {
       buf(pos) = '0'
       buf(pos + 1) = 'S'
@@ -1761,11 +1984,14 @@ final class JsonWriter private[json] (
         pos += 1
       }
     }
-    buf(pos) = '"'
-    count = pos + 1
+    if (isRaw) count = pos
+    else {
+      buf(pos) = '"'
+      count = pos + 1
+    }
   }
 
-  private[this] def writeInstant(x: Instant): Unit = {
+  private[this] def writeInstant(x: Instant, isRaw: Boolean): Unit = {
     val epochSecond                                          = x.getEpochSecond
     var year, adjust400YearCycles, marchDayOfYear, secsOfDay = 0
     if (epochSecond > -316224000000L && epochSecond < 316224000000L) { // the fast path from -10000 to 10000 years
@@ -1814,16 +2040,19 @@ final class JsonWriter private[json] (
     val m          = 9 - marchMonth >> 4
     val month      = (m & -9 | 3) + marchMonth
     year += adjust400YearCycles * 400 - m
-    writeInstant(year, month, day, secsOfDay, x.getNano)
+    writeInstant(year, month, day, secsOfDay, x.getNano, isRaw)
   }
 
   @inline
-  private[this] def writeInstant(year: Int, month: Int, day: Int, secsOfDay: Int, nano: Int): Unit = {
+  private[this] def writeInstant(year: Int, month: Int, day: Int, secsOfDay: Int, nano: Int, isRaw: Boolean): Unit = {
     var pos = ensureBufCapacity(39) // 39 == Instant.MAX.toString.length + 2
     val buf = this.buf
     val ds  = digits
-    buf(pos) = '"'
-    pos = writeYear(year, pos + 1, buf, ds)
+    if (!isRaw) {
+      buf(pos) = '"'
+      pos += 1
+    }
+    pos = writeYear(year, pos, buf, ds)
     buf(pos) = '-'
     val d1 = ds(month)
     buf(pos + 1) = d1.toByte
@@ -1851,95 +2080,140 @@ final class JsonWriter private[json] (
     pos += 15
     if (nano != 0) pos = writeNanos(nano, pos, buf, ds)
     buf(pos) = 'Z'
-    buf(pos + 1) = '"'
-    count = pos + 2
+    if (isRaw) count = pos + 1
+    else {
+      buf(pos + 1) = '"'
+      count = pos + 2
+    }
   }
 
-  private[this] def writeLocalDate(x: LocalDate): Unit = {
+  private[this] def writeLocalDate(x: LocalDate, isRaw: Boolean): Unit = {
     var pos = ensureBufCapacity(18) // 18 == LocalDate.MAX.toString.length + 2
     val buf = this.buf
-    buf(pos) = '"'
-    pos = writeLocalDate(x, pos + 1, buf, digits)
-    buf(pos) = '"'
-    count = pos + 1
+    if (!isRaw) {
+      buf(pos) = '"'
+      pos += 1
+    }
+    pos = writeLocalDate(x, pos, buf, digits)
+    if (isRaw) count = pos
+    else {
+      buf(pos) = '"'
+      count = pos + 1
+    }
   }
 
-  private[this] def writeLocalDateTime(x: LocalDateTime): Unit = {
+  private[this] def writeLocalDateTime(x: LocalDateTime, isRaw: Boolean): Unit = {
     var pos = ensureBufCapacity(37) // 37 == LocalDateTime.MAX.toString.length + 2
     val buf = this.buf
     val ds  = digits
-    buf(pos) = '"'
-    pos = writeLocalDate(x.toLocalDate, pos + 1, buf, ds)
+    if (!isRaw) {
+      buf(pos) = '"'
+      pos += 1
+    }
+    pos = writeLocalDate(x.toLocalDate, pos, buf, ds)
     buf(pos) = 'T'
     pos = writeLocalTime(x.toLocalTime, pos + 1, buf, ds)
-    buf(pos) = '"'
-    count = pos + 1
+    if (isRaw) count = pos
+    else {
+      buf(pos) = '"'
+      count = pos + 1
+    }
   }
 
-  private[this] def writeLocalTime(x: LocalTime): Unit = {
+  private[this] def writeLocalTime(x: LocalTime, isRaw: Boolean): Unit = {
     var pos = ensureBufCapacity(20) // 20 == LocalTime.MAX.toString.length + 2
     val buf = this.buf
     val ds  = digits
-    buf(pos) = '"'
-    pos = writeLocalTime(x, pos + 1, buf, ds)
-    buf(pos) = '"'
-    count = pos + 1
+    if (!isRaw) {
+      buf(pos) = '"'
+      pos += 1
+    }
+    pos = writeLocalTime(x, pos, buf, ds)
+    if (isRaw) count = pos
+    else {
+      buf(pos) = '"'
+      count = pos + 1
+    }
   }
 
-  private[this] def writeMonthDay(x: MonthDay): Unit = {
-    val pos = ensureBufCapacity(9) // 9 == "--01-01".length + 2
+  private[this] def writeMonthDay(x: MonthDay, isRaw: Boolean): Unit = {
+    var pos = ensureBufCapacity(9) // 9 == "--01-01".length + 2
     val buf = this.buf
     val ds  = digits
-    buf(pos) = '"'
+    if (!isRaw) {
+      buf(pos) = '"'
+      pos += 1
+    }
+    buf(pos) = '-'
     buf(pos + 1) = '-'
-    buf(pos + 2) = '-'
     val d1 = ds(x.getMonthValue)
-    buf(pos + 3) = d1.toByte
-    buf(pos + 4) = (d1 >> 8).toByte
-    buf(pos + 5) = '-'
+    buf(pos + 2) = d1.toByte
+    buf(pos + 3) = (d1 >> 8).toByte
+    buf(pos + 4) = '-'
     val d2 = ds(x.getDayOfMonth)
-    buf(pos + 6) = d2.toByte
-    buf(pos + 7) = (d2 >> 8).toByte
-    buf(pos + 8) = '"'
-    count = pos + 9
+    buf(pos + 5) = d2.toByte
+    buf(pos + 6) = (d2 >> 8).toByte
+    if (isRaw) count = pos + 7
+    else {
+      buf(pos + 7) = '"'
+      count = pos + 8
+    }
   }
 
-  private[this] def writeOffsetDateTime(x: OffsetDateTime): Unit = {
+  private[this] def writeOffsetDateTime(x: OffsetDateTime, isRaw: Boolean): Unit = {
     var pos = ensureBufCapacity(46) // 46 == "+999999999-12-31T23:59:59.999999999+00:00:01".length + 2
     val buf = this.buf
     val ds  = digits
-    buf(pos) = '"'
-    pos = writeLocalDate(x.toLocalDate, pos + 1, buf, ds)
+    if (!isRaw) {
+      buf(pos) = '"'
+      pos += 1
+    }
+    pos = writeLocalDate(x.toLocalDate, pos, buf, ds)
     buf(pos) = 'T'
     pos = writeOffset(x.getOffset, writeLocalTime(x.toLocalTime, pos + 1, buf, ds), buf, ds)
-    buf(pos) = '"'
-    count = pos + 1
+    if (isRaw) count = pos
+    else {
+      buf(pos) = '"'
+      count = pos + 1
+    }
   }
 
-  private[this] def writeOffsetTime(x: OffsetTime): Unit = {
+  private[this] def writeOffsetTime(x: OffsetTime, isRaw: Boolean): Unit = {
     var pos = ensureBufCapacity(29) // 29 == "00:00:07.999999998+00:00:08".length + 2
     val buf = this.buf
     val ds  = digits
-    buf(pos) = '"'
-    pos = writeOffset(x.getOffset, writeLocalTime(x.toLocalTime, pos + 1, buf, ds), buf, ds)
-    buf(pos) = '"'
-    count = pos + 1
+    if (!isRaw) {
+      buf(pos) = '"'
+      pos += 1
+    }
+    pos = writeOffset(x.getOffset, writeLocalTime(x.toLocalTime, pos, buf, ds), buf, ds)
+    if (isRaw) count = pos
+    else {
+      buf(pos) = '"'
+      count = pos + 1
+    }
   }
 
-  private[this] def writePeriod(x: Period): Unit = {
+  private[this] def writePeriod(x: Period, isRaw: Boolean): Unit = {
     var pos    = ensureBufCapacity(39) // 39 == "P-2147483648Y-2147483648M-2147483648D".length + 2
     val buf    = this.buf
     val years  = x.getYears
     val months = x.getMonths
     val days   = x.getDays
-    buf(pos) = '"'
-    buf(pos + 1) = 'P'
-    pos += 2
+    if (!isRaw) {
+      buf(pos) = '"'
+      pos += 1
+    }
+    buf(pos) = 'P'
+    pos += 1
     if ((years | months | days) == 0) {
       buf(pos) = '0'
       buf(pos + 1) = 'D'
-      buf(pos + 2) = '"'
-      count = pos + 3
+      if (isRaw) count = pos + 2
+      else {
+        buf(pos + 2) = '"'
+        count = pos + 3
+      }
     } else {
       val ds      = digits
       var q0      = years
@@ -1968,8 +2242,11 @@ final class JsonWriter private[json] (
           q0 = days
           b = 'D'
         } else {
-          buf(pos) = '"'
-          count = pos + 1
+          if (isRaw) count = pos
+          else {
+            buf(pos) = '"'
+            count = pos + 1
+          }
           return
         }
       }
@@ -1977,12 +2254,9 @@ final class JsonWriter private[json] (
   }
 
   private[this] def writeYear(x: Year): Unit = {
-    var pos = ensureBufCapacity(12) // 12 == "+999999999".length + 2
-    val buf = this.buf
-    buf(pos) = '"'
-    pos = writeYear(x.getValue, pos + 1, buf, digits)
-    buf(pos) = '"'
-    count = pos + 1
+    writeBytes('"')
+    writeInt(x.getValue)
+    writeBytes('"')
   }
 
   private[this] def writeYearMonth(x: YearMonth): Unit = {
@@ -1999,12 +2273,15 @@ final class JsonWriter private[json] (
     count = pos + 4
   }
 
-  private[this] def writeZonedDateTime(x: ZonedDateTime): Unit = {
+  private[this] def writeZonedDateTime(x: ZonedDateTime, isRaw: Boolean): Unit = {
     var pos = ensureBufCapacity(46) // 46 == "+999999999-12-31T23:59:59.999999999+00:00:01".length + 2
     var buf = this.buf
     val ds  = digits
-    buf(pos) = '"'
-    pos = writeLocalDate(x.toLocalDate, pos + 1, buf, ds)
+    if (!isRaw) {
+      buf(pos) = '"'
+      pos += 1
+    }
+    pos = writeLocalDate(x.toLocalDate, pos, buf, ds)
     buf(pos) = 'T'
     pos = writeOffset(x.getOffset, writeLocalTime(x.toLocalTime, pos + 1, buf, ds), buf, ds)
     val zone = x.getZone
@@ -2018,17 +2295,20 @@ final class JsonWriter private[json] (
         pos = flushAndGrowBuf(required, pos)
         buf = this.buf
       }
-      var i = 0
-      while (i < len) {
-        buf(pos) = zoneId.charAt(i).toByte
+      var idx = 0
+      while (idx < len) {
+        buf(pos) = zoneId.charAt(idx).toByte
         pos += 1
-        i += 1
+        idx += 1
       }
       buf(pos) = ']'
       pos += 1
     }
-    buf(pos) = '"'
-    count = pos + 1
+    if (isRaw) count = pos
+    else {
+      buf(pos) = '"'
+      count = pos + 1
+    }
   }
 
   private[this] def writeZoneOffset(x: ZoneOffset): Unit = {
@@ -2702,8 +2982,10 @@ final class JsonWriter private[json] (
     }
   }
 
+  @noinline
   private[this] def illegalNumberError(x: Float): Nothing = encodeError("illegal number: " + x)
 
+  @noinline
   private[this] def illegalNumberError(x: Double): Nothing = encodeError("illegal number: " + x)
 
   @inline
@@ -2713,6 +2995,7 @@ final class JsonWriter private[json] (
     else flushAndGrowBuf(required, pos)
   }
 
+  @noinline
   private[this] def flushAndGrowBuf(required: Int, pos: Int): Int =
     if (bbuf ne null) {
       bbuf.put(buf, 0, pos)
@@ -2728,11 +3011,14 @@ final class JsonWriter private[json] (
       pos
     }
 
+  @noinline
   private[this] def growBuf(required: Int): Unit =
     setBuf(java.util.Arrays.copyOf(buf, (-1 >>> Integer.numberOfLeadingZeros(limit | required)) + 1))
 
+  @inline
   private[this] def reallocateBufToPreferredSize(): Unit = setBuf(new Array[Byte](config.preferredBufSize))
 
+  @inline
   private[this] def setBuf(buf: Array[Byte]): Unit = {
     this.buf = buf
     limit = buf.length
@@ -3475,15 +3761,15 @@ object JsonWriter {
   @volatile private[this] var tenPow18Squares: Array[BigInteger] = Array(BigInteger.valueOf(1000000000000000000L))
 
   final private def getTenPow18Squares(n: Int): Array[BigInteger] = {
-    var ss = tenPow18Squares
-    var i  = ss.length
-    if (n >= i) {
-      var s = ss(i - 1)
+    var ss  = tenPow18Squares
+    var idx = ss.length
+    if (n >= idx) {
+      var s = ss(idx - 1)
       ss = java.util.Arrays.copyOf(ss, n + 1)
-      while (i <= n) {
+      while (idx <= n) {
         s = s.multiply(s)
-        ss(i) = s
-        i += 1
+        ss(idx) = s
+        idx += 1
       }
       tenPow18Squares = ss
     }
@@ -3491,13 +3777,183 @@ object JsonWriter {
   }
 
   /**
-   * Checks if a character does not require JSON escaping or encoding.
+   * Checks if a string does not require JSON escaping or encoding.
    *
-   * @param ch
-   *   the character to check
+   * @param s
+   *   the string to check
    * @return
-   *   `true` if the character is a basic ASCII character (code point less than
-   *   `0x80`) that does not need JSON escaping
+   *   `true` if the string has basic ASCII characters only (code point less
+   *   than `0x80` that does not need JSON escaping)
    */
-  final def isNonEscapedAscii(ch: Char): Boolean = ch < 0x80 && escapedChars(ch.toInt) == 0
+  final def isNonEscapedAscii(s: String): Boolean = {
+    val len = s.length
+    var idx = 0
+    while (
+      idx < len && {
+        val ch = s.charAt(idx)
+        ch < 0x80 && escapedChars(ch.toInt) == 0
+      }
+    ) idx += 1
+    idx == len
+  }
+
+  final def toBigDecimal(x: Float): BigDecimal = {
+    // Based on the ingenious work of Xiang JunBo and Wang TieJun
+    // "xjb: Fast Float to String Algorithm": https://github.com/xjb714/xjb/blob/4852e533287bd0e8d554c2a9f4cc6eaa93ca799f/fast_f2s.pdf
+    // Sources with the license are here: https://github.com/xjb714/xjb
+    val bits = java.lang.Float.floatToRawIntBits(x)
+    if (x == 0.0f) BigDecimal(0)
+    else {
+      val e2IEEE   = bits >> 23 & 0xff
+      val m2IEEE   = bits & 0x7fffff
+      var e2       = e2IEEE - 150
+      var m2       = m2IEEE | 0x800000
+      var m10, e10 = 0
+      if (e2 == 0) m10 = m2
+      else if ((e2 >= -23 && e2 < 0) && m2 << e2 == 0) m10 = m2 >> -e2
+      else {
+        if (e2IEEE == 0) {
+          m2 = m2IEEE
+          e2 = -149
+        } else if (e2 == 105) throw new IllegalArgumentException("Infinity or NaN")
+        if (m2IEEE == 0) e10 = (e2 * 315653 - 131237) >> 20
+        else e10 = (e2 * 315653) >> 20
+        val h     = (((e10 + 1) * -217707) >> 16) + e2
+        val pow10 = floatPow10s(31 - e10)
+        val hi64  = unsignedMultiplyHigh(
+          pow10,
+          m2.toLong << (h + 37)
+        ) // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(pow10, m2.toLong << (h + 37))
+        m10 = (hi64 >>> 36).toInt * 10
+        val halfUlpPlusEven = (pow10 >>> (28 - h)) + ((m2IEEE + 1) & 1)
+        val dotOne          = hi64 & 0xfffffffffL
+        if (
+          {
+            if (m2IEEE == 0) halfUlpPlusEven >>> 1
+            else halfUlpPlusEven
+          } <= dotOne
+        ) {
+          if (halfUlpPlusEven > 0xfffffffffL - dotOne) m10 += 10
+          else m10 += (((dotOne << 4) + (dotOne << 2) + ((hi64 >>> 32).toInt & 0xf) + 0xffffffff9L) >>> 37).toInt
+        }
+        if (m2IEEE == 0 && ((e2 == -119) | (e2 == 64) | (e2 == 67))) m10 += 1
+      }
+      var q = 0
+      while (
+        m10 >= 100 && {
+          val p = m10 * 1374389535L
+          q = (p >> 37).toInt      // divide a positive int by 100
+          (p & 0x1fc0000000L) == 0 // check if q is divisible by 100
+        }
+      ) {
+        e10 += 2
+        m10 = q
+      }
+      val sign = bits >> 31
+      new BigDecimal(java.math.BigDecimal.valueOf((m10 ^ sign) - sign, -e10))
+    }
+  }
+
+  final def toBigDecimal(x: Double): BigDecimal = {
+    // Based on the ingenious work of Xiang JunBo and Wang TieJun
+    // "xjb: Fast Float to String Algorithm": https://github.com/xjb714/xjb/blob/4852e533287bd0e8d554c2a9f4cc6eaa93ca799f/fast_f2s.pdf
+    // Sources with the license are here: https://github.com/xjb714/xjb
+    val bits = java.lang.Double.doubleToRawLongBits(x)
+    if (x == 0.0) BigDecimal(0)
+    else {
+      val e2IEEE = (bits >> 52).toInt & 0x7ff
+      val m2IEEE = bits & 0xfffffffffffffL
+      var e2     = e2IEEE - 1075
+      var m2     = m2IEEE | 0x10000000000000L
+      var m10    = 0L
+      var e10    = 0
+      if (e2 == 0) m10 = m2
+      else if ((e2 >= -52 && e2 < 0) && m2 << e2 == 0) m10 = m2 >> -e2
+      else {
+        if (e2IEEE == 0) {
+          m2 = m2IEEE
+          e2 = -1074
+        } else if (e2 == 972) throw new IllegalArgumentException("Infinity or NaN")
+        if (m2IEEE == 0) e10 = (e2 * 315653 - 131237) >> 20
+        else e10 = (e2 * 315653) >> 20
+        val h       = (((e10 + 1) * -217707) >> 16) + e2
+        val pow10s  = doublePow10s
+        val i       = 292 - e10 << 1
+        val pow10_1 = pow10s(i)
+        val pow10_2 = pow10s(i + 1)
+        val cb      = m2 << (h + 7)
+        val lo64_1  = unsignedMultiplyHigh(
+          pow10_2,
+          cb
+        ) // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(pow10_2, cb)
+        val lo64_2 = pow10_1 * cb
+        var hi64   = unsignedMultiplyHigh(
+          pow10_1,
+          cb
+        ) // TODO: when dropping JDK 17 support replace by Math.unsignedMultiplyHigh(pow10_1, cb)
+        val lo64 = lo64_1 + lo64_2
+        hi64 += compareUnsigned(lo64, lo64_1) >>> 31
+        m10 = hi64 >>> 6
+        m10 = (m10 << 3) + (m10 << 1)
+        val halfUlpPlusEven = (pow10_1 >>> -h) + ((m2.toInt + 1) & 1)
+        val dotOne          = (hi64 << 58) | (lo64 >>> 6)
+        if (compareUnsigned(halfUlpPlusEven, -1 - dotOne) > 0) m10 += 10L
+        else if (m2IEEE != 0) {
+          if (compareUnsigned(halfUlpPlusEven, dotOne) <= 0) m10 = calculateM10(hi64, lo64, dotOne)
+        } else {
+          var tmp1 = dotOne >>> 4
+          tmp1 = (tmp1 << 3) + (tmp1 << 1)
+          var tmp2 = halfUlpPlusEven >>> 4
+          tmp2 += tmp2 << 2
+          if (compareUnsigned((tmp1 << 4) >>> 4, tmp2) > 0) m10 += (tmp1 >>> 60).toInt + 1
+          else if (compareUnsigned(halfUlpPlusEven >>> 1, dotOne) <= 0) m10 = calculateM10(hi64, lo64, dotOne)
+        }
+      }
+      var q1 = 0L
+      while (
+        m10 >= 1000000000L && {
+          q1 = unsignedMultiplyHigh(m10 >> 2, 2951479051793528259L) >> 2 // divide a positive long by 100
+          q1 * 100 == m10
+        }
+      ) {
+        e10 += 2
+        m10 = q1
+      }
+      if (m10 == m10.toInt) {
+        var q2 = 0
+        while (
+          m10 >= 100 && {
+            val p = m10 * 1374389535L
+            q2 = (p >> 37).toInt     // divide a positive int by 100
+            (p & 0x1fc0000000L) == 0 // check if q is divisible by 100
+          }
+        ) {
+          e10 += 2
+          m10 = q2
+        }
+      }
+      val sign = bits >> 63
+      new BigDecimal(java.math.BigDecimal.valueOf((m10 ^ sign) - sign, -e10))
+    }
+  }
+
+  // 64-bit unsigned multiplication was adopted from the great Hacker's Delight function
+  // (Henry S. Warren, Hacker's Delight, Addison-Wesley, 2nd edition, Fig. 8.2)
+  // https://doc.lagout.org/security/Hackers%20Delight.pdf
+  @inline
+  private[this] def unsignedMultiplyHigh(x: Long, y: Long): Long = {
+    val xl = x & 0xffffffffL
+    val xh = x >>> 32
+    val yl = y & 0xffffffffL
+    val yh = y >>> 32
+    val t  = xh * yl + (xl * yl >>> 32)
+    xh * yh + (t >>> 32) + (xl * yh + (t & 0xffffffffL) >>> 32)
+  }
+
+  @inline
+  private[this] def calculateM10(hi: Long, lo: Long, dotOne: Long): Long = ((hi << 3) + (hi << 1) +
+    ((lo >>> 61).toInt + (lo >>> 63).toInt + (compareUnsigned((lo << 3) + (lo << 1), lo << 1) >>> 31) + {
+      if (dotOne == 0x4000000000000000L) 0x1f
+      else 0x20
+    })) >>> 6
 }

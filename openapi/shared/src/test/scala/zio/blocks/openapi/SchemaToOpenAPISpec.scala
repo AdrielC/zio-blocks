@@ -1,0 +1,284 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package zio.blocks.openapi
+
+import zio.blocks.schema._
+import zio.blocks.schema.json.JsonSchema
+import zio.test._
+
+object SchemaToOpenAPISpec extends SchemaBaseSpec {
+
+  // Defined at top-level to avoid StackOverflowError from nested sealed trait initialization
+  sealed trait Status
+  object Status {
+    case object Active   extends Status
+    case object Inactive extends Status
+    case object Pending  extends Status
+    implicit val schema: Schema[Status] = Schema.derived
+  }
+
+  def spec: Spec[TestEnvironment, Any] = suite("Schema[A].toOpenAPISchema")(
+    suite("primitive types")(
+      test("converts Schema[String] to OpenAPI string schema") {
+        val openAPISchema = Schema[String].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.toJsonSchema.exists(_.isInstanceOf[JsonSchema.Object]),
+          openAPISchema.discriminator.isEmpty
+        )
+      },
+      test("converts Schema[Int] to OpenAPI integer schema") {
+        val openAPISchema = Schema[Int].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.toJsonSchema.exists(_.isInstanceOf[JsonSchema.Object]),
+          openAPISchema.discriminator.isEmpty
+        )
+      },
+      test("converts Schema[Boolean] to OpenAPI boolean schema") {
+        val openAPISchema = Schema[Boolean].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.discriminator.isEmpty
+        )
+      },
+      test("converts Schema[Double] to OpenAPI number schema") {
+        val openAPISchema = Schema[Double].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.discriminator.isEmpty
+        )
+      }
+    ),
+    suite("case classes")(
+      test("converts simple case class to OpenAPI object schema") {
+        case class Person(name: String, age: Int)
+
+        object Person {
+          implicit val schema: Schema[Person] = Schema.derived
+        }
+
+        val openAPISchema = Schema[Person].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.toJsonSchema.exists(_.isInstanceOf[JsonSchema.Object]),
+          openAPISchema.discriminator.isEmpty
+        )
+      },
+      test("converts nested case class to OpenAPI object schema") {
+        case class Address(street: String, city: String)
+
+        object Address {
+          implicit val schema: Schema[Address] = Schema.derived
+        }
+
+        case class Person(name: String, address: Address)
+
+        object Person {
+          implicit val schema: Schema[Person] = Schema.derived
+        }
+
+        val openAPISchema = Schema[Person].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.toJsonSchema.exists(_.isInstanceOf[JsonSchema.Object]),
+          openAPISchema.discriminator.isEmpty
+        )
+      },
+      test("converts case class with optional fields to OpenAPI schema") {
+        case class User(name: String, email: Option[String])
+
+        object User {
+          implicit val schema: Schema[User] = Schema.derived
+        }
+
+        val openAPISchema = Schema[User].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.toJsonSchema.exists(_.isInstanceOf[JsonSchema.Object]),
+          openAPISchema.discriminator.isEmpty
+        )
+      }
+    ),
+    suite("collections")(
+      test("converts Schema[List[A]] to OpenAPI array schema") {
+        val openAPISchema = Schema[List[String]].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.toJsonSchema.exists(_.isInstanceOf[JsonSchema.Object]),
+          openAPISchema.discriminator.isEmpty
+        )
+      },
+      test("converts Schema[Vector[A]] to OpenAPI array schema") {
+        val openAPISchema = Schema[Vector[Int]].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.discriminator.isEmpty
+        )
+      },
+      test("converts Schema[Set[A]] to OpenAPI array schema") {
+        val openAPISchema = Schema[Set[String]].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.discriminator.isEmpty
+        )
+      }
+    ),
+    suite("sealed traits")(
+      test("converts sealed trait to OpenAPI oneOf schema with discriminator") {
+        sealed trait Animal
+
+        case class Dog(name: String, breed: String) extends Animal
+
+        case class Cat(name: String, indoor: Boolean) extends Animal
+
+        object Animal {
+          implicit val schema: Schema[Animal] = Schema.derived
+        }
+
+        val openAPISchema = Schema[Animal].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.toJsonSchema.exists(_.isInstanceOf[JsonSchema.Object])
+        )
+      },
+      test("converts sealed trait with single case to OpenAPI schema") {
+        sealed trait Result
+
+        case class Success(value: String) extends Result
+
+        object Result {
+          implicit val schema: Schema[Result] = Schema.derived
+        }
+
+        val openAPISchema = Schema[Result].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.discriminator.isEmpty
+        )
+      },
+      test("converts sealed trait with case objects (enum pattern) to OpenAPI schema") {
+        val openAPISchema = Schema[Status].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.discriminator.isEmpty
+        )
+      }
+    ),
+
+    suite("round-trip conversions")(
+      test("Schema -> OpenAPI -> JsonSchema preserves structure") {
+        case class Product(id: Long, name: String, price: Double)
+
+        object Product {
+          implicit val schema: Schema[Product] = Schema.derived
+        }
+
+        val openAPISchema = Schema[Product].toOpenAPISchema
+        val jsonSchema    = openAPISchema.toJsonSchema
+        assertTrue(
+          jsonSchema.isRight,
+          jsonSchema.exists(_.isInstanceOf[JsonSchema.Object])
+        )
+      },
+      test("round-trip through DynamicValue works") {
+        case class Item(name: String, quantity: Int)
+
+        object Item {
+          implicit val schema: Schema[Item] = Schema.derived
+        }
+
+        val original      = Item("Widget", 42)
+        val openAPISchema = Schema[Item].toOpenAPISchema
+        val result        = Schema[Item].fromDynamicValue(Schema[Item].toDynamicValue(original))
+        assertTrue(
+          result.isRight,
+          result.exists(_.name == "Widget"),
+          result.exists(_.quantity == 42),
+          openAPISchema.toJsonSchema.isRight
+        )
+      }
+    ),
+    suite("complex types")(
+      test("converts Schema[Option[A]] to OpenAPI schema") {
+        val openAPISchema = Schema[Option[String]].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.discriminator.isEmpty
+        )
+      },
+      test("converts Schema[Map[String, A]] to OpenAPI object schema") {
+        val openAPISchema = Schema[Map[String, Int]].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.discriminator.isEmpty
+        )
+      }
+    ),
+    suite("integration with existing SchemaObject")(
+      test("toOpenAPISchema produces same result as manual conversion") {
+        case class Book(title: String, author: String, year: Int)
+
+        object Book {
+          implicit val schema: Schema[Book] = Schema.derived
+        }
+
+        val viaExtension = Schema[Book].toOpenAPISchema
+        val viaManual    = SchemaObject.fromJsonSchema(Schema[Book].toJsonSchema)
+        assertTrue(
+          viaExtension.toJsonSchema == viaManual.toJsonSchema,
+          viaExtension.discriminator == viaManual.discriminator,
+          viaExtension.xml == viaManual.xml,
+          viaExtension.externalDocs == viaManual.externalDocs,
+          viaExtension.example == viaManual.example,
+          viaExtension.extensions == viaManual.extensions
+        )
+      }
+    ),
+    suite("edge cases")(
+      test("converts generic schema to OpenAPI schema") {
+        case class Container[A](value: A)
+
+        object Container {
+          implicit def schema[A: Schema]: Schema[Container[A]] = Schema.derived
+        }
+
+        val openAPISchema = Schema[Container[String]].toOpenAPISchema
+        assertTrue(
+          openAPISchema.toJsonSchema.isRight,
+          openAPISchema.discriminator.isEmpty
+        )
+      },
+      test("preserves OpenAPI-specific vocabulary when not set by toOpenAPISchema") {
+        case class SimpleData(id: Int)
+
+        object SimpleData {
+          implicit val schema: Schema[SimpleData] = Schema.derived
+        }
+
+        val openAPISchema = Schema[SimpleData].toOpenAPISchema
+        assertTrue(
+          openAPISchema.discriminator.isEmpty,
+          openAPISchema.xml.isEmpty,
+          openAPISchema.externalDocs.isEmpty,
+          openAPISchema.example.isEmpty,
+          openAPISchema.extensions.isEmpty
+        )
+      }
+    )
+  )
+}

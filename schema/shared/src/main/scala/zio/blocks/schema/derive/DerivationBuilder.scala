@@ -1,7 +1,26 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.derive
 
+import zio.blocks.chunk.Chunk
 import zio.blocks.schema._
-import zio.blocks.schema.binding.{Binding, BindingType}
+import zio.blocks.schema.binding.{Binding, BindingType, HasBinding}
+import zio.blocks.typeid.TypeId
+import zio.blocks.docs.Doc
 
 /**
  * A `DerivationBuilder` is capable of deriving a type class instance for any
@@ -25,15 +44,52 @@ final case class DerivationBuilder[TC[_], A](
   instanceOverrides: IndexedSeq[InstanceOverride],
   modifierOverrides: IndexedSeq[ModifierOverride]
 ) {
+
+  /**
+   * Overrides the type class instance at an exact path in the schema tree
+   * identified by `optic`. This is the most precise override: it targets one
+   * specific location.
+   */
   def instance[B](optic: Optic[A, B], instance: => TC[B]): DerivationBuilder[TC, A] =
     copy(instanceOverrides = instanceOverrides :+ new InstanceOverrideByOptic(optic.toDynamic, Lazy(instance)))
 
-  def instance[B](typeName: TypeName[B], instance: => TC[B]): DerivationBuilder[TC, A] =
-    copy(instanceOverrides = instanceOverrides :+ new InstanceOverrideByType(typeName, Lazy(instance)))
+  /**
+   * Overrides the type class instance for every occurrence of the type
+   * identified by `typeId`, regardless of where it appears in the schema tree.
+   * This is the least precise override.
+   */
+  def instance[B](typeId: TypeId[B], instance: => TC[B]): DerivationBuilder[TC, A] =
+    copy(instanceOverrides = instanceOverrides :+ new InstanceOverrideByType(typeId, Lazy(instance)))
 
-  def modifier[B](typeName: TypeName[B], modifier: Modifier.Reflect): DerivationBuilder[TC, A] =
-    copy(modifierOverrides = modifierOverrides :+ new ModifierReflectOverrideByType(typeName, modifier))
+  /**
+   * Overrides the type class instance for a term (record field or variant case)
+   * identified by `termName` inside a parent record or variant identified by
+   * `typeId`. This is a medium-precision override between optic-based (exact
+   * path) and type-based (all occurrences).
+   *
+   * The `typeId` refers to the parent record/variant type, not the field type.
+   * The field type `B` is not statically checked against the actual term type.
+   * If no term with the given name exists in the parent type, the override is
+   * silently ignored.
+   */
+  def instance[P, B](typeId: TypeId[P], termName: String, instance: => TC[B]): DerivationBuilder[TC, A] =
+    copy(instanceOverrides =
+      instanceOverrides :+ new InstanceOverrideByTypeAndTermName(typeId, termName, Lazy(instance))
+    )
 
+  /**
+   * Adds a reflect-level modifier for every occurrence of the type identified
+   * by `typeId`.
+   */
+  def modifier[B](typeId: TypeId[B], modifier: Modifier.Reflect): DerivationBuilder[TC, A] =
+    copy(modifierOverrides = modifierOverrides :+ new ModifierReflectOverrideByType(typeId, modifier))
+
+  /**
+   * Adds a modifier at an exact path in the schema tree identified by `optic`.
+   * Accepts both [[Modifier.Reflect]] (applied to the node itself) and
+   * [[Modifier.Term]] (applied to the terminal field or case at the end of the
+   * optic path).
+   */
   def modifier[B](optic: Optic[A, B], modifier: Modifier): DerivationBuilder[TC, A] = modifier match {
     case mr: Modifier.Reflect =>
       copy(modifierOverrides = modifierOverrides :+ new ModifierReflectOverrideByOptic(optic.toDynamic, mr))
@@ -41,75 +97,131 @@ final case class DerivationBuilder[TC[_], A](
       val nodes = optic.toDynamic.nodes
       if (nodes.isEmpty) this
       else {
-        val path = new DynamicOptic(nodes.init)
         nodes.last match {
-          case DynamicOptic.Node.Field(name) =>
-            copy(modifierOverrides = modifierOverrides :+ new ModifierTermOverrideByOptic(path, name, mt))
-          case DynamicOptic.Node.Case(name) =>
-            copy(modifierOverrides = modifierOverrides :+ new ModifierTermOverrideByOptic(path, name, mt))
+          case f: DynamicOptic.Node.Field =>
+            copy(modifierOverrides =
+              modifierOverrides.appended(new ModifierTermOverrideByOptic(new DynamicOptic(nodes.init), f.name, mt))
+            )
+          case c: DynamicOptic.Node.Case =>
+            copy(modifierOverrides =
+              modifierOverrides.appended(new ModifierTermOverrideByOptic(new DynamicOptic(nodes.init), c.name, mt))
+            )
           case _ => this
         }
       }
   }
 
-  lazy val derive: TC[A] = {
+  /**
+   * Adds a term-level modifier for a field or variant case identified by
+   * `termName` inside a parent type identified by `typeId`. The `typeId` refers
+   * to the parent record/variant type that owns the term, not the term's own
+   * type. If no term with the given name exists in the parent type, the
+   * modifier is silently ignored.
+   */
+  def modifier[B](typeId: TypeId[B], termName: String, modifier: Modifier.Term): DerivationBuilder[TC, A] =
+    copy(modifierOverrides = modifierOverrides :+ new ModifierTermOverrideByType(typeId, termName, modifier))
+
+  lazy val derive: TC[A] = Reflect.withTransformCache {
     val allInstanceOverrides = instanceOverrides ++ deriver.instanceOverrides
     val allModifierOverrides = modifierOverrides ++ deriver.modifierOverrides
     val instanceByOpticMap   =
       allInstanceOverrides.collect { case InstanceOverrideByOptic(optic, instance) => (optic, instance) }.toMap
     val instanceByTypeMap =
-      allInstanceOverrides.collect { case InstanceOverrideByType(typeName, instance) => (typeName, instance) }.toMap
+      allInstanceOverrides.collect { case InstanceOverrideByType(typeId, instance) => (typeId, instance) }.toMap
+    val instanceByTypeAndTermNameMap =
+      allInstanceOverrides.collect { case InstanceOverrideByTypeAndTermName(typeId, termName, instance) =>
+        ((typeId, termName), instance)
+      }.toMap
     val modifierReflectByOpticMap =
-      allModifierOverrides.foldLeft[Map[DynamicOptic, Vector[Modifier.Reflect]]](Map.empty) {
+      allModifierOverrides.foldLeft[Map[DynamicOptic, Chunk[Modifier.Reflect]]](Map.empty) {
         case (acc, ModifierReflectOverrideByOptic(optic, modifier)) =>
-          acc.updated(optic, acc.getOrElse(optic, Vector.empty).appended(modifier))
+          acc.updated(optic, acc.getOrElse(optic, Chunk.empty).appended(modifier))
         case (acc, _) => acc
       }
     val modifierReflectByTypeMap =
-      allModifierOverrides.foldLeft[Map[TypeName[?], Vector[Modifier.Reflect]]](Map.empty) {
-        case (acc, ModifierReflectOverrideByType(typeName, modifier)) =>
-          acc.updated(typeName, acc.getOrElse(typeName, Vector.empty).appended(modifier))
+      allModifierOverrides.foldLeft[Map[TypeId[?], Chunk[Modifier.Reflect]]](Map.empty) {
+        case (acc, ModifierReflectOverrideByType(typeId, modifier)) =>
+          acc.updated(typeId, acc.getOrElse(typeId, Chunk.empty).appended(modifier))
         case (acc, _) => acc
       }
     val modifierTermByOpticMap =
-      allModifierOverrides.foldLeft[Map[DynamicOptic, Vector[(String, Modifier.Term)]]](Map.empty) {
+      allModifierOverrides.foldLeft[Map[DynamicOptic, Chunk[(String, Modifier.Term)]]](Map.empty) {
         case (acc, ModifierTermOverrideByOptic(optic, termName, modifier)) =>
-          acc.updated(optic, acc.getOrElse(optic, Vector.empty).appended((termName, modifier)))
+          acc.updated(optic, acc.getOrElse(optic, Chunk.empty).appended((termName, modifier)))
         case (acc, _) => acc
       }
     val modifierTermByTypeMap =
-      allModifierOverrides.foldLeft[Map[TypeName[?], Vector[(String, Modifier.Term)]]](Map.empty) {
-        case (acc, ModifierTermOverrideByType(typeName, termName, modifier)) =>
-          acc.updated(typeName, acc.getOrElse(typeName, Vector.empty).appended((termName, modifier)))
+      allModifierOverrides.foldLeft[Map[TypeId[?], Chunk[(String, Modifier.Term)]]](Map.empty) {
+        case (acc, ModifierTermOverrideByType(typeId, termName, modifier)) =>
+          acc.updated(typeId, acc.getOrElse(typeId, Chunk.empty).appended((termName, modifier)))
         case (acc, _) => acc
       }
 
-    def prependCombinedModifiers[A0](modifiers: Seq[Modifier.Reflect], path: DynamicOptic, typeName: TypeName[A0]) =
-      (modifierReflectByOpticMap.get(path), modifierReflectByTypeMap.get(typeName)) match {
+    def prependCombinedModifiers[A0](modifiers: Seq[Modifier.Reflect], path: DynamicOptic, typeId: TypeId[A0]) =
+      (modifierReflectByOpticMap.get(path), modifierReflectByTypeMap.get(typeId)) match {
         case (Some(modifiers1), Some(modifiers2)) => (modifiers1 ++ modifiers2) ++ modifiers
         case (Some(modifiers1), _)                => modifiers1 ++ modifiers
         case (_, Some(modifiers2))                => modifiers2 ++ modifiers
         case _                                    => modifiers
       }
 
-    def combineModifiers[A0](path: DynamicOptic, typeName: TypeName[A0]) =
-      (modifierTermByOpticMap.get(path), modifierTermByTypeMap.get(typeName)) match {
+    def combineModifiers[A0](path: DynamicOptic, typeId: TypeId[A0]) =
+      (modifierTermByOpticMap.get(path), modifierTermByTypeMap.get(typeId)) match {
         case (Some(modifiers1), Some(modifiers2)) => modifiers1 ++ modifiers2
         case (Some(modifiers1), _)                => modifiers1
         case (_, Some(modifiers2))                => modifiers2
         case _                                    => Seq.empty
       }
 
-    def getCustomInstance[A0](path: DynamicOptic, typeName: TypeName[A0]): Option[Lazy[TC[A0]]] =
-      // first try to find an instance by optic (more precise)
+    def getCustomInstance[A0](path: DynamicOptic, typeId: TypeId[A0]): Option[Lazy[TC[A0]]] =
       instanceByOpticMap
         .get(path)
-        // then try to find an instance by type name (more general)
-        .orElse(instanceByTypeMap.get(typeName.asInstanceOf[TypeName[Any]]))
-        .map(_.asInstanceOf[Lazy[TC[A0]]])
+        .orElse(instanceByTypeMap.get(typeId.asInstanceOf[TypeId[Any]]))
+        .asInstanceOf[Option[Lazy[TC[A0]]]]
 
     type F[T, A0] = Binding[T, A0]
     type G[T, A0] = BindingInstance[TC, T, A0]
+
+    def replaceFieldInstance[A0](reflect: Reflect[G, A0], newInstance: Lazy[TC[A0]]): Reflect[G, A0] = {
+      def swap[T, B](bi: BindingInstance[TC, T, B]): BindingInstance[TC, T, B] =
+        new BindingInstance(bi.binding, newInstance.asInstanceOf[Lazy[TC[B]]])
+
+      (reflect match {
+        case p: Reflect.Primitive[G, _]              => p.copy(primitiveBinding = swap(p.primitiveBinding))
+        case r: Reflect.Record[G, _]                 => r.copy(recordBinding = swap(r.recordBinding))
+        case v: Reflect.Variant[G, _]                => v.copy(variantBinding = swap(v.variantBinding))
+        case s: Reflect.Sequence[G, _, _] @unchecked => s.copy(seqBinding = swap(s.seqBinding))
+        case m: Reflect.Map[G, _, _, _] @unchecked   => m.copy(mapBinding = swap(m.mapBinding))
+        case d: Reflect.Dynamic[G] @unchecked        => d.copy(dynamicBinding = swap(d.dynamicBinding))
+        case w: Reflect.Wrapper[G, _, _]             => w.copy(wrapperBinding = swap(w.wrapperBinding))
+        case d: Reflect.Deferred[G, A0]              => d.copy(_value = () => replaceFieldInstance(d._value(), newInstance))
+      }).asInstanceOf[Reflect[G, A0]]
+    }
+
+    def applyTypeAndTermNameOverrides[A0](
+      typeId: TypeId[A0],
+      path: DynamicOptic,
+      terms: IndexedSeq[Term[G, A0, ?]],
+      pathBuilder: (DynamicOptic, String) => DynamicOptic
+    ): IndexedSeq[Term[G, A0, ?]] =
+      if (instanceByTypeAndTermNameMap.isEmpty) terms
+      else {
+        terms.map { term =>
+          instanceByTypeAndTermNameMap.get((typeId.asInstanceOf[TypeId[Any]], term.name)) match {
+            case Some(overrideInstance) =>
+              val fieldPath = pathBuilder(path, term.name)
+              if (instanceByOpticMap.contains(fieldPath)) term
+              else {
+                val newValue = replaceFieldInstance(
+                  term.value.asInstanceOf[Reflect[G, Any]],
+                  overrideInstance.asInstanceOf[Lazy[TC[Any]]]
+                )
+                term.copy(value = newValue.asInstanceOf[Reflect[G, term.Focus]]).asInstanceOf[Term[G, A0, ?]]
+              }
+            case _ => term
+          }
+        }
+      }
 
     schema.reflect
       .transform[G](
@@ -118,17 +230,33 @@ final case class DerivationBuilder[TC[_], A](
           override def transformRecord[A0](
             path: DynamicOptic,
             fields: IndexedSeq[Term[G, A0, ?]],
-            typeName: TypeName[A0],
+            typeId: TypeId[A0],
             metadata: F[BindingType.Record, A0],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            storedDefaultValue: Option[DynamicValue],
+            storedExamples: collection.immutable.Seq[DynamicValue]
           ): Lazy[Reflect.Record[G, A0]] = Lazy {
-            val instance = getCustomInstance[A0](path, typeName).getOrElse {
-              val modifiersToPrepend = combineModifiers(path, typeName)
+            implicit val hasBindingG: HasBinding[G] = BindingInstance.hasBinding[TC]
+            val tempReflect                         =
+              new Reflect.Record[G, A0](
+                fields,
+                typeId,
+                new BindingInstance(
+                  metadata,
+                  Lazy.fail(new IllegalStateException("Temporary instance for fromDynamicValue conversion"))
+                ),
+                doc,
+                modifiers
+              )
+            val instance = getCustomInstance[A0](path, typeId).getOrElse {
+              val fieldsWithInstanceOverrides =
+                applyTypeAndTermNameOverrides(typeId, path, fields, (p, name) => p.field(name))
+              val modifiersToPrepend = combineModifiers(path, typeId)
               val updatedFields      =
-                if (modifiersToPrepend.isEmpty) fields
+                if (modifiersToPrepend.isEmpty) fieldsWithInstanceOverrides
                 else {
-                  fields.map { field =>
+                  fieldsWithInstanceOverrides.map { field =>
                     val fieldModifiersToPrepend = modifiersToPrepend.collect {
                       case (name, modifier) if name == field.name => modifier
                     }
@@ -139,142 +267,287 @@ final case class DerivationBuilder[TC[_], A](
               deriver
                 .deriveRecord(
                   updatedFields,
-                  typeName,
-                  metadata,
+                  typeId,
+                  Binding.bindingHasBinding.record(metadata),
                   doc,
-                  prependCombinedModifiers(modifiers, path, typeName)
+                  prependCombinedModifiers(modifiers, path, typeId),
+                  storedDefaultValue.flatMap(dv => tempReflect.fromDynamicValue(dv).toOption),
+                  storedExamples.flatMap(dv => tempReflect.fromDynamicValue(dv).toOption)
                 )
             }
-            new Reflect.Record(fields, typeName, new BindingInstance(metadata, instance), doc, modifiers)
+            new Reflect.Record(
+              fields,
+              typeId,
+              new BindingInstance(metadata, instance),
+              doc,
+              modifiers,
+              storedDefaultValue,
+              storedExamples
+            )
           }
 
           override def transformVariant[A0](
             path: DynamicOptic,
             cases: IndexedSeq[Term[G, A0, ? <: A0]],
-            typeName: TypeName[A0],
+            typeId: TypeId[A0],
             metadata: F[BindingType.Variant, A0],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            storedDefaultValue: Option[DynamicValue],
+            storedExamples: collection.immutable.Seq[DynamicValue]
           ): Lazy[Reflect.Variant[G, A0]] = Lazy {
-            val instance = getCustomInstance[A0](path, typeName).getOrElse {
-              val modifiersToAdd = combineModifiers(path, typeName)
+            implicit val hasBindingG: HasBinding[G] = BindingInstance.hasBinding[TC]
+            val tempReflect                         =
+              new Reflect.Variant[G, A0](
+                cases,
+                typeId,
+                new BindingInstance(
+                  metadata,
+                  Lazy.fail(new IllegalStateException("Temporary instance for fromDynamicValue conversion"))
+                ),
+                doc,
+                modifiers
+              )
+            val instance = getCustomInstance[A0](path, typeId).getOrElse {
+              val casesWithInstanceOverrides =
+                applyTypeAndTermNameOverrides(typeId, path, cases, (p, name) => p.caseOf(name))
+                  .asInstanceOf[IndexedSeq[Term[G, A0, ? <: A0]]]
+              val modifiersToAdd = combineModifiers(path, typeId)
               val updatedCases   =
-                if (modifiersToAdd.isEmpty) cases
+                if (modifiersToAdd.isEmpty) casesWithInstanceOverrides
                 else {
-                  cases.map { case_ =>
+                  casesWithInstanceOverrides.map { case_ =>
                     val caseModifiersToPrepend = modifiersToAdd.collect {
                       case (name, modifier) if name == case_.name => modifier
                     }
                     if (caseModifiersToPrepend.isEmpty) case_
-                    else
+                    else {
                       case_
                         .copy(modifiers = caseModifiersToPrepend ++ case_.modifiers)
                         .asInstanceOf[Term[G, A0, ? <: A0]]
+                    }
                   }
                 }
               deriver
                 .deriveVariant(
                   updatedCases,
-                  typeName,
-                  metadata,
+                  typeId,
+                  Binding.bindingHasBinding.variant(metadata),
                   doc,
-                  prependCombinedModifiers(modifiers, path, typeName)
+                  prependCombinedModifiers(modifiers, path, typeId),
+                  storedDefaultValue.flatMap(dv => tempReflect.fromDynamicValue(dv).toOption),
+                  storedExamples.flatMap(dv => tempReflect.fromDynamicValue(dv).toOption)
                 )
             }
-            new Reflect.Variant(cases, typeName, new BindingInstance(metadata, instance), doc, modifiers)
+            new Reflect.Variant(
+              cases,
+              typeId,
+              new BindingInstance(metadata, instance),
+              doc,
+              modifiers,
+              storedDefaultValue,
+              storedExamples
+            )
           }
 
           override def transformSequence[A0, C[_]](
             path: DynamicOptic,
             element: Reflect[G, A0],
-            typeName: TypeName[C[A0]],
+            typeId: TypeId[C[A0]],
             metadata: F[BindingType.Seq[C], C[A0]],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            storedDefaultValue: Option[DynamicValue],
+            storedExamples: collection.immutable.Seq[DynamicValue]
           ): Lazy[Reflect.Sequence[G, A0, C]] = Lazy {
-            val instance = getCustomInstance[C[A0]](path, typeName).getOrElse(
+            implicit val hasBindingG: HasBinding[G] = BindingInstance.hasBinding[TC]
+            val tempReflect                         =
+              new Reflect.Sequence[G, A0, C](
+                element,
+                typeId,
+                new BindingInstance(
+                  metadata,
+                  Lazy.fail(new IllegalStateException("Temporary instance for fromDynamicValue conversion"))
+                ),
+                doc,
+                modifiers
+              )
+            val instance = getCustomInstance[C[A0]](path, typeId).getOrElse(
               deriver
-                .deriveSequence(element, typeName, metadata, doc, prependCombinedModifiers(modifiers, path, typeName))
+                .deriveSequence(
+                  element,
+                  typeId,
+                  Binding.bindingHasBinding.seq(metadata),
+                  doc,
+                  prependCombinedModifiers(modifiers, path, typeId),
+                  storedDefaultValue.flatMap(dv => tempReflect.fromDynamicValue(dv).toOption),
+                  storedExamples.flatMap(dv => tempReflect.fromDynamicValue(dv).toOption)
+                )
             )
-            new Reflect.Sequence(element, typeName, new BindingInstance(metadata, instance), doc, modifiers)
+            new Reflect.Sequence(
+              element,
+              typeId,
+              new BindingInstance(metadata, instance),
+              doc,
+              modifiers,
+              storedDefaultValue,
+              storedExamples
+            )
           }
 
           override def transformMap[Key, Value, M[_, _]](
             path: DynamicOptic,
             key: Reflect[G, Key],
             value: Reflect[G, Value],
-            typeName: TypeName[M[Key, Value]],
+            typeId: TypeId[M[Key, Value]],
             metadata: F[BindingType.Map[M], M[Key, Value]],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            storedDefaultValue: Option[DynamicValue],
+            storedExamples: collection.immutable.Seq[DynamicValue]
           ): Lazy[Reflect.Map[G, Key, Value, M]] = Lazy {
-            val instance = getCustomInstance[M[Key, Value]](path, typeName).getOrElse(
+            implicit val hasBindingG: HasBinding[G] = BindingInstance.hasBinding[TC]
+            val tempReflect                         =
+              new Reflect.Map[G, Key, Value, M](
+                key,
+                value,
+                typeId,
+                new BindingInstance(
+                  metadata,
+                  Lazy.fail(new IllegalStateException("Temporary instance for fromDynamicValue conversion"))
+                ),
+                doc,
+                modifiers
+              )
+            val instance = getCustomInstance[M[Key, Value]](path, typeId).getOrElse(
               deriver
-                .deriveMap(key, value, typeName, metadata, doc, prependCombinedModifiers(modifiers, path, typeName))
+                .deriveMap(
+                  key,
+                  value,
+                  typeId,
+                  Binding.bindingHasBinding.map(metadata),
+                  doc,
+                  prependCombinedModifiers(modifiers, path, typeId),
+                  storedDefaultValue.flatMap(dv => tempReflect.fromDynamicValue(dv).toOption),
+                  storedExamples.flatMap(dv => tempReflect.fromDynamicValue(dv).toOption)
+                )
             )
-            new Reflect.Map(key, value, typeName, new BindingInstance(metadata, instance), doc, modifiers)
+            new Reflect.Map(
+              key,
+              value,
+              typeId,
+              new BindingInstance(metadata, instance),
+              doc,
+              modifiers,
+              storedDefaultValue,
+              storedExamples
+            )
           }
 
           override def transformDynamic(
             path: DynamicOptic,
-            typeName: TypeName[DynamicValue],
+            typeId: TypeId[DynamicValue],
             metadata: F[BindingType.Dynamic, DynamicValue],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            storedDefaultValue: Option[DynamicValue],
+            storedExamples: collection.immutable.Seq[DynamicValue]
           ): Lazy[Reflect.Dynamic[G]] = Lazy {
-            val instance = getCustomInstance[DynamicValue](path, TypeName.dynamicValue)
-              .getOrElse(deriver.deriveDynamic[G](metadata, doc, prependCombinedModifiers(modifiers, path, typeName)))
-            new Reflect.Dynamic(new BindingInstance(metadata, instance), typeName, doc, modifiers)
+            val instance = getCustomInstance[DynamicValue](path, TypeId.of[DynamicValue])
+              .getOrElse(
+                deriver.deriveDynamic[G](
+                  Binding.bindingHasBinding.dynamic(metadata),
+                  doc,
+                  prependCombinedModifiers(modifiers, path, typeId),
+                  storedDefaultValue,
+                  storedExamples
+                )
+              )
+            new Reflect.Dynamic(
+              new BindingInstance(metadata, instance),
+              typeId,
+              doc,
+              modifiers,
+              storedDefaultValue,
+              storedExamples
+            )
           }
 
           override def transformPrimitive[A0](
             path: DynamicOptic,
             primitiveType: PrimitiveType[A0],
-            typeName: TypeName[A0],
+            typeId: TypeId[A0],
             metadata: F[BindingType.Primitive, A0],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            storedDefaultValue: Option[DynamicValue],
+            storedExamples: collection.immutable.Seq[DynamicValue]
           ): Lazy[Reflect.Primitive[G, A0]] = Lazy {
-            val instance = getCustomInstance[A0](path, typeName).getOrElse(
+            val instance = getCustomInstance[A0](path, typeId).getOrElse(
               deriver
                 .derivePrimitive(
                   primitiveType,
-                  typeName,
-                  metadata,
+                  typeId,
+                  Binding.bindingHasBinding.primitive(metadata),
                   doc,
-                  prependCombinedModifiers(modifiers, path, typeName)
+                  prependCombinedModifiers(modifiers, path, typeId),
+                  storedDefaultValue.flatMap(dv => primitiveType.fromDynamicValue(dv, Nil).toOption),
+                  storedExamples.flatMap(dv => primitiveType.fromDynamicValue(dv, Nil).toOption)
                 )
             )
-            new Reflect.Primitive(primitiveType, typeName, new BindingInstance(metadata, instance), doc, modifiers)
+            new Reflect.Primitive(
+              primitiveType,
+              typeId,
+              new BindingInstance(metadata, instance),
+              doc,
+              modifiers,
+              storedDefaultValue,
+              storedExamples
+            )
           }
 
           override def transformWrapper[A0, B](
             path: DynamicOptic,
             wrapped: Reflect[G, B],
-            typeName: TypeName[A0],
-            wrapperPrimitiveType: Option[PrimitiveType[A0]],
+            typeId: TypeId[A0],
             metadata: F[BindingType.Wrapper[A0, B], A0],
             doc: Doc,
-            modifiers: Seq[Modifier.Reflect]
+            modifiers: Seq[Modifier.Reflect],
+            storedDefaultValue: Option[DynamicValue],
+            storedExamples: collection.immutable.Seq[DynamicValue]
           ): Lazy[Reflect.Wrapper[G, A0, B]] = Lazy {
-            val instance = getCustomInstance[A0](path, typeName)
+            implicit val hasBindingG: HasBinding[G] = BindingInstance.hasBinding[TC]
+            val tempReflect                         =
+              new Reflect.Wrapper[G, A0, B](
+                wrapped,
+                typeId,
+                new BindingInstance(
+                  metadata,
+                  Lazy.fail(new IllegalStateException("Temporary instance for fromDynamicValue conversion"))
+                ),
+                doc,
+                modifiers
+              )
+            val instance = getCustomInstance[A0](path, typeId)
               .getOrElse(
                 deriver.deriveWrapper(
                   wrapped,
-                  typeName,
-                  wrapperPrimitiveType,
-                  metadata,
+                  typeId,
+                  Binding.bindingHasBinding.wrapper(metadata),
                   doc,
-                  prependCombinedModifiers(modifiers, path, typeName)
+                  prependCombinedModifiers(modifiers, path, typeId),
+                  storedDefaultValue.flatMap(dv => tempReflect.fromDynamicValue(dv).toOption),
+                  storedExamples.flatMap(dv => tempReflect.fromDynamicValue(dv).toOption)
                 )
               )
             new Reflect.Wrapper(
               wrapped,
-              typeName,
-              wrapperPrimitiveType,
+              typeId,
               new BindingInstance(metadata, instance),
               doc,
-              modifiers
+              modifiers,
+              storedDefaultValue,
+              storedExamples
             )
           }
         }

@@ -1,4 +1,22 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
+
+import zio.blocks.chunk.Chunk
 
 /**
  * A schema metadata structure can store arbitrary metadata attached to the
@@ -6,7 +24,7 @@ package zio.blocks.schema
  */
 final case class SchemaMetadata[S, G[_]](private val map: Map[Optic[S, ?], IndexedSeq[?]]) {
   def add[A](optic: Optic[S, A], value: G[A]): SchemaMetadata[S, G] =
-    SchemaMetadata[S, G](map.updated(optic, map.getOrElse(optic, IndexedSeq.empty) :+ value))
+    new SchemaMetadata[S, G](map.updated(optic, map.getOrElse(optic, Chunk.empty) :+ value))
 
   def fold[Z](z: Z)(fold: SchemaMetadata.Folder[S, G, Z]): Z =
     map.foldLeft(z) { case (z, (optic, values)) =>
@@ -17,8 +35,7 @@ final case class SchemaMetadata[S, G[_]](private val map: Map[Optic[S, ?], Index
 
   def get[A](optic: Optic[S, A]): Option[G[A]] = getAll(optic).headOption
 
-  def getAll[A](optic: Optic[S, A]): IndexedSeq[G[A]] =
-    map.getOrElse(optic, IndexedSeq.empty).asInstanceOf[IndexedSeq[G[A]]]
+  def getAll[A](optic: Optic[S, A]): IndexedSeq[G[A]] = map.getOrElse(optic, Chunk.empty).asInstanceOf[IndexedSeq[G[A]]]
 
   def removeAll[A](optic: Optic[S, A]): SchemaMetadata[S, G] = SchemaMetadata[S, G](map - optic)
 

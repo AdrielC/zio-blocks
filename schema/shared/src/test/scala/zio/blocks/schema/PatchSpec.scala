@@ -1,10 +1,28 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
+import zio.blocks.chunk.Chunk
+import zio.blocks.schema.patch.{DynamicPatch, Patch, PatchMode}
 import zio.test._
 import zio.test.Assertion._
 import java.time.YearMonth
 
-object PatchSpec extends ZIOSpecDefault {
+object PatchSpec extends SchemaBaseSpec {
   def spec: Spec[TestEnvironment, Any] = suite("PatchSpec")(
     test("replace a field with a new value") {
       val person1 = Person(12345678901L, "John", "123 Main St", Nil)
@@ -12,7 +30,7 @@ object PatchSpec extends ZIOSpecDefault {
       val person2 = person1.copy(name = "Piero")
       assert(patch(person1))(equalTo(person2)) &&
       assert(patch.applyOption(person1))(isSome(equalTo(person2))) &&
-      assert(patch.applyOrFail(person1))(isRight(equalTo(person2)))
+      assert(patch.apply(person1, PatchMode.Strict))(isRight(equalTo(person2)))
     },
     test("replace a case with a new value") {
       val paymentMethod1 = PayPal("x@gmail.com")
@@ -20,7 +38,7 @@ object PatchSpec extends ZIOSpecDefault {
       val paymentMethod2 = PayPal("y@gmail.com")
       assert(patch(paymentMethod1))(equalTo(paymentMethod2)) &&
       assert(patch.applyOption(paymentMethod1))(isSome(equalTo(paymentMethod2))) &&
-      assert(patch.applyOrFail(paymentMethod1))(isRight(equalTo(paymentMethod2)))
+      assert(patch.apply(paymentMethod1, PatchMode.Strict))(isRight(equalTo(paymentMethod2)))
     },
     test("replace a case field with a new value") {
       val paymentMathod1 = PayPal("x@gmail.com")
@@ -28,7 +46,7 @@ object PatchSpec extends ZIOSpecDefault {
       val paymentMethod2 = PayPal("y@gmail.com")
       assert(patch(paymentMathod1))(equalTo(paymentMethod2)) &&
       assert(patch.applyOption(paymentMathod1))(isSome(equalTo(paymentMethod2))) &&
-      assert(patch.applyOrFail(paymentMathod1))(isRight(equalTo(paymentMethod2)))
+      assert(patch.apply(paymentMathod1, PatchMode.Strict))(isRight(equalTo(paymentMethod2)))
     },
     test("replace selected list values") {
       val person1 = Person(
@@ -49,7 +67,7 @@ object PatchSpec extends ZIOSpecDefault {
       )
       assert(patch(person1))(equalTo(person2)) &&
       assert(patch.applyOption(person1))(isSome(equalTo(person2))) &&
-      assert(patch.applyOrFail(person1))(isRight(equalTo(person2)))
+      assert(patch.apply(person1, PatchMode.Strict))(isRight(equalTo(person2)))
     },
     test("don't replace non-matching case with a new value") {
       val person1        = Person(12345678901L, "John", "123 Main St", Nil)
@@ -59,28 +77,22 @@ object PatchSpec extends ZIOSpecDefault {
       val patch3         = Patch.replace(Person.paymentMethods(PaymentMethod.payPalEmail), "y@gmail.com")
       assert(patch1(paymentMethod1))(equalTo(paymentMethod1)) &&
       assert(patch1.applyOption(paymentMethod1))(isNone) &&
-      assert(patch1.applyOrFail(paymentMethod1))(
+      assert(patch1.apply(paymentMethod1, PatchMode.Strict))(
         isLeft(
-          hasError(
-            "During attempted access at .when[PayPal], encountered an unexpected case at .when[PayPal]: expected PayPal, but got CreditCard"
-          )
+          hasError("Expected case PayPal but got CreditCard")
         )
       ) &&
       assert(patch2(paymentMethod1))(equalTo(paymentMethod1)) &&
       assert(patch2.applyOption(paymentMethod1))(isNone) &&
-      assert(patch2.applyOrFail(paymentMethod1))(
+      assert(patch2.apply(paymentMethod1, PatchMode.Strict))(
         isLeft(
-          hasError(
-            "During attempted access at .when[PayPal].email, encountered an unexpected case at .when[PayPal]: expected PayPal, but got CreditCard"
-          )
+          hasError("Expected case PayPal but got CreditCard")
         )
       ) &&
       assert(patch3.applyOption(person1))(isNone) &&
-      assert(patch3.applyOrFail(person1))(
+      assert(patch3.apply(person1, PatchMode.Strict))(
         isLeft(
-          hasError(
-            "During attempted access at .paymentMethods.each.when[PayPal].email, encountered an empty sequence at .paymentMethods.each"
-          )
+          hasError("encountered an empty sequence")
         )
       )
     },
@@ -90,12 +102,65 @@ object PatchSpec extends ZIOSpecDefault {
       val parson2 = person1.copy(name = "Piero", address = "321 Main St")
       assert(patch(person1))(equalTo(parson2)) &&
       assert(patch.applyOption(person1))(isSome(equalTo(parson2))) &&
-      assert(patch.applyOrFail(person1))(isRight(equalTo(parson2)))
-    }
+      assert(patch.apply(person1, PatchMode.Strict))(isRight(equalTo(parson2)))
+    },
+    suite("Patch[S] failure branches")(
+      test("apply returns original on internal failure") {
+        case class TestPerson(name: String, age: Int)
+        implicit val testPersonSchema: Schema[TestPerson] = Schema.derived
+
+        val person = TestPerson("John", 30)
+        val dp     = DynamicPatch(
+          Chunk(
+            DynamicPatch.DynamicPatchOp(
+              DynamicOptic.root.field("nonexistent"),
+              Patch.Operation.Set(DynamicValue.int(99))
+            )
+          )
+        )
+        val patch  = new Patch[TestPerson](dp, testPersonSchema)
+        val result = patch(person)
+        assertTrue(result == person)
+      },
+      test("applyOption returns None on failure") {
+        case class TestPerson(name: String, age: Int)
+        implicit val testPersonSchema: Schema[TestPerson] = Schema.derived
+
+        val person = TestPerson("John", 30)
+        val dp     = DynamicPatch(
+          Chunk(
+            DynamicPatch.DynamicPatchOp(
+              DynamicOptic.root.field("nonexistent"),
+              Patch.Operation.Set(DynamicValue.int(99))
+            )
+          )
+        )
+        val patch  = new Patch[TestPerson](dp, testPersonSchema)
+        val result = patch.applyOption(person)
+        assertTrue(result.isEmpty)
+      },
+      test("apply with mode returns Left on failure") {
+        case class TestPerson(name: String, age: Int)
+        implicit val testPersonSchema: Schema[TestPerson] = Schema.derived
+
+        val person = TestPerson("John", 30)
+        val dp     = DynamicPatch(
+          Chunk(
+            DynamicPatch.DynamicPatchOp(
+              DynamicOptic.root.field("nonexistent"),
+              Patch.Operation.Set(DynamicValue.int(99))
+            )
+          )
+        )
+        val patch  = new Patch[TestPerson](dp, testPersonSchema)
+        val result = patch(person, PatchMode.Strict)
+        assertTrue(result.isLeft)
+      }
+    )
   )
 
-  private[this] def hasError(message: String): Assertion[OpticCheck] =
-    hasField[OpticCheck, String]("message", _.message, containsString(message))
+  private[this] def hasError(message: String): Assertion[SchemaError] =
+    hasField[SchemaError, String]("message", _.message, containsString(message))
 }
 
 sealed trait PaymentMethod

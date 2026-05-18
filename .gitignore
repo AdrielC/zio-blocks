@@ -7,6 +7,12 @@ project/target
 project/project/target
 .bsp
 .bloop
+cs
+sbt/
+.zio-sbt
+
+# Mill
+out/
 
 # Idea
 .idea
@@ -24,4 +30,47 @@ TAGS
 # VS Code
 .metals
 .vscode/settings.json
+metals.sbt
+
+# Golem
+.golem/
+.golem-apps/
+.golem-local/
+.golem-local-run/
+.golem-template-test/
+task-results/
+golem-temp/
+.tmp-getting-started-e2e/
+.generated/
+tmp-wit/
+tmpgolemts/
+scala.js
 project/metals.sbt
+
+# Compilation log files
+*.log
+schema/jvm/src/test/resources/json-schema-test-suite/
+.cursor/mcp.json
+
+# Internal working directories (Sisyphus/OpenCode)
+.sisyphus/
+.opencode/
+.claude/settings.local.json
+
+# Project-specific files to exclude
+.git-rewrite/
+github-data/
+SCOPE_CONSOLIDATION_PLAN.md
+shell.nix
+scope-examples/src/main/scala/scope/examples/MyApp.scala
+
+# Code search indexes
+.ck/
+.ckignore
+.cqs/
+website/docs/*
+website/node_modules/*
+website/build/*
+website/.docusaurus
+*.class
+*.tasty

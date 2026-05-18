@@ -1,22 +1,38 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.avro
 
 import org.openjdk.jmh.annotations._
 import zio.Chunk
 import zio.blocks.BaseBenchmark
 import zio.blocks.schema.Schema
-import zio.blocks.schema.avro.{AvroBinaryCodec, AvroFormat}
-import zio.schema.codec.AvroCodec
+import zio.blocks.schema.avro.{AvroCodec, AvroFormat}
 import zio.schema.{DeriveSchema, Schema => ZIOSchema}
 import java.io.ByteArrayOutputStream
 import com.sksamuel.avro4s.{AvroSchema, AvroInputStream, AvroOutputStream}
+import scala.compiletime.uninitialized
 
 class AvroListOfRecordsBenchmark extends BaseBenchmark {
   import AvroListOfRecordsDomain._
 
   @Param(Array("1", "10", "100", "1000", "10000", "100000"))
   var size: Int                         = 100
-  var listOfRecords: List[Person]       = _
-  var encodedListOfRecords: Array[Byte] = _
+  var listOfRecords: List[Person]       = uninitialized
+  var encodedListOfRecords: Array[Byte] = uninitialized
 
   @Setup
   def setup(): Unit = {
@@ -31,13 +47,13 @@ class AvroListOfRecordsBenchmark extends BaseBenchmark {
   @Benchmark
   def readingZioBlocks: List[Person] = zioBlocksCodec.decode(encodedListOfRecords) match {
     case Right(value) => value
-    case Left(error)  => sys.error(error.getMessage)
+    case Left(error)  => throw error
   }
 
   @Benchmark
   def readingZioSchema: List[Person] = zioSchemaCodec.decode(Chunk.fromArray(encodedListOfRecords)) match {
     case Right(value) => value
-    case Left(error)  => sys.error(error.getMessage)
+    case Left(error)  => throw error
   }
 
   @Benchmark
@@ -61,7 +77,8 @@ object AvroListOfRecordsDomain {
 
   implicit val zioSchema: ZIOSchema[Person] = DeriveSchema.gen[Person]
 
-  val zioSchemaCodec: AvroCodec.ExtendedBinaryCodec[List[Person]] = AvroCodec.schemaBasedBinaryCodec[List[Person]]
+  val zioSchemaCodec: zio.schema.codec.AvroCodec.ExtendedBinaryCodec[List[Person]] =
+    zio.schema.codec.AvroCodec.schemaBasedBinaryCodec[List[Person]]
 
-  val zioBlocksCodec: AvroBinaryCodec[List[Person]] = Schema.derived.deriving(AvroFormat.deriver).derive
+  val zioBlocksCodec: AvroCodec[List[Person]] = Schema.derived.deriving(AvroFormat.deriver).derive
 }

@@ -1,0 +1,212 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package zio.blocks.schema
+
+import scala.collection.Factory
+
+trait Into[-A, +B] {
+  def into(a: A): Either[SchemaError, B]
+}
+
+object Into extends IntoVersionSpecific with IntoPrimitiveInstances with IntoContainerInstances {
+  def apply[A, B](implicit ev: Into[A, B]): Into[A, B] = ev
+
+  implicit def identity[A]: Into[A, A] = (a: A) => new Right(a)
+}
+
+trait IntoPrimitiveInstances {
+
+  // === Numeric Widening (Lossless) ===
+
+  implicit val byteToShort: Into[Byte, Short] = (a: Byte) => new Right(a.toShort)
+
+  implicit val byteToInt: Into[Byte, Int] = (a: Byte) => new Right(a.toInt)
+
+  implicit val byteToLong: Into[Byte, Long] = (a: Byte) => new Right(a.toLong)
+
+  implicit val byteToFloat: Into[Byte, Float] = (a: Byte) => new Right(a.toFloat)
+
+  implicit val byteToDouble: Into[Byte, Double] = (a: Byte) => new Right(a.toDouble)
+
+  implicit val shortToInt: Into[Short, Int] = (a: Short) => new Right(a.toInt)
+
+  implicit val shortToLong: Into[Short, Long] = (a: Short) => new Right(a.toLong)
+
+  implicit val shortToFloat: Into[Short, Float] = (a: Short) => new Right(a.toFloat)
+
+  implicit val shortToDouble: Into[Short, Double] = (a: Short) => new Right(a.toDouble)
+
+  implicit val intToLong: Into[Int, Long] = (a: Int) => new Right(a.toLong)
+
+  implicit val intToFloat: Into[Int, Float] = (a: Int) => new Right(a.toFloat)
+
+  implicit val intToDouble: Into[Int, Double] = (a: Int) => new Right(a.toDouble)
+
+  implicit val longToFloat: Into[Long, Float] = (a: Long) => new Right(a.toFloat)
+
+  implicit val longToDouble: Into[Long, Double] = (a: Long) => new Right(a.toDouble)
+
+  implicit val floatToDouble: Into[Float, Double] = (a: Float) => new Right(a.toDouble)
+
+  // === Numeric Narrowing (with Runtime Validation) ===
+
+  implicit val shortToByte: Into[Short, Byte] = (a: Short) =>
+    if (a >= Byte.MinValue && a <= Byte.MaxValue) new Right(a.toByte)
+    else
+      new Left(
+        SchemaError.conversionFailed(Nil, s"Value $a is out of range for Byte [${Byte.MinValue}, ${Byte.MaxValue}]")
+      )
+
+  implicit val intToByte: Into[Int, Byte] = (a: Int) =>
+    if (a >= Byte.MinValue && a <= Byte.MaxValue) new Right(a.toByte)
+    else
+      new Left(
+        SchemaError.conversionFailed(Nil, s"Value $a is out of range for Byte [${Byte.MinValue}, ${Byte.MaxValue}]")
+      )
+
+  implicit val intToShort: Into[Int, Short] = (a: Int) =>
+    if (a >= Short.MinValue && a <= Short.MaxValue) new Right(a.toShort)
+    else
+      new Left(
+        SchemaError.conversionFailed(Nil, s"Value $a is out of range for Short [${Short.MinValue}, ${Short.MaxValue}]")
+      )
+
+  implicit val longToByte: Into[Long, Byte] = (a: Long) =>
+    if (a >= Byte.MinValue && a <= Byte.MaxValue) new Right(a.toByte)
+    else
+      new Left(
+        SchemaError.conversionFailed(Nil, s"Value $a is out of range for Byte [${Byte.MinValue}, ${Byte.MaxValue}]")
+      )
+
+  implicit val longToShort: Into[Long, Short] = (a: Long) =>
+    if (a >= Short.MinValue && a <= Short.MaxValue) new Right(a.toShort)
+    else
+      new Left(
+        SchemaError.conversionFailed(Nil, s"Value $a is out of range for Short [${Short.MinValue}, ${Short.MaxValue}]")
+      )
+
+  implicit val longToInt: Into[Long, Int] = (a: Long) =>
+    if (a >= Int.MinValue && a <= Int.MaxValue) new Right(a.toInt)
+    else
+      new Left(
+        SchemaError.conversionFailed(Nil, s"Value $a is out of range for Int [${Int.MinValue}, ${Int.MaxValue}]")
+      )
+
+  implicit val doubleToFloat: Into[Double, Float] = (a: Double) =>
+    if (a >= -Float.MaxValue && a <= Float.MaxValue) new Right(a.toFloat)
+    else new Left(SchemaError.conversionFailed(Nil, s"Value $a is out of range for Float"))
+
+  implicit val floatToInt: Into[Float, Int] = (a: Float) =>
+    if (a >= Int.MinValue && a <= Int.MaxValue && a == a.toInt.toFloat) new Right(a.toInt)
+    else new Left(SchemaError.conversionFailed(Nil, s"Value $a cannot be precisely converted to Int"))
+
+  implicit val floatToLong: Into[Float, Long] = (a: Float) =>
+    if (a >= Long.MinValue && a <= Long.MaxValue && a == a.toLong.toFloat) new Right(a.toLong)
+    else new Left(SchemaError.conversionFailed(Nil, s"Value $a cannot be precisely converted to Long"))
+
+  implicit val doubleToInt: Into[Double, Int] = (a: Double) =>
+    if (a >= Int.MinValue && a <= Int.MaxValue && a == a.toInt.toDouble) new Right(a.toInt)
+    else new Left(SchemaError.conversionFailed(Nil, s"Value $a cannot be precisely converted to Int"))
+
+  implicit val doubleToLong: Into[Double, Long] = (a: Double) =>
+    if (a >= Long.MinValue && a <= Long.MaxValue && a == a.toLong.toDouble) new Right(a.toLong)
+    else new Left(SchemaError.conversionFailed(Nil, s"Value $a cannot be precisely converted to Long"))
+}
+
+trait IntoContainerInstances {
+
+  implicit def optionInto[A, B](implicit into: Into[A, B]): Into[Option[A], Option[B]] = {
+    case Some(value) => into.into(value).map(new Some(_))
+    case None        => new Right(None)
+  }
+
+  implicit def eitherInto[L1, R1, L2, R2](implicit
+    leftInto: Into[L1, L2],
+    rightInto: Into[R1, R2]
+  ): Into[Either[L1, R1], Either[L2, R2]] = {
+    case Left(l)  => leftInto.into(l).map(new Left(_))
+    case Right(r) => rightInto.into(r).map(new Right(_))
+  }
+
+  implicit def mapInto[K1, V1, K2, V2](implicit
+    keyInto: Into[K1, K2],
+    valueInto: Into[V1, V2]
+  ): Into[Map[K1, V1], Map[K2, V2]] = { (a: Map[K1, V1]) =>
+    val results = a.toList.map { case (k, v) =>
+      for {
+        k2 <- keyInto.into(k)
+        v2 <- valueInto.into(v)
+      } yield (k2, v2)
+    }
+    sequence(results).map(_.toMap)
+  }
+
+  implicit def iterableInto[A, B, F1[X] <: Iterable[X], F2[_]](implicit
+    intoAB: Into[A, B],
+    factory: Factory[B, F2[B]]
+  ): Into[F1[A], F2[B]] = { (a: F1[A]) =>
+    val results = a.map(intoAB.into).toList
+    sequence(results).map { list =>
+      val builder = factory.newBuilder
+      builder ++= list
+      builder.result()
+    }
+  }
+
+  implicit def arrayToIterable[A, B, F[_]](implicit
+    intoAB: Into[A, B],
+    factory: Factory[B, F[B]]
+  ): Into[Array[A], F[B]] = { (a: Array[A]) =>
+    val results = a.map(intoAB.into).toList
+    sequence(results).map { list =>
+      val builder = factory.newBuilder
+      builder ++= list
+      builder.result()
+    }
+  }
+
+  implicit def iterableToArray[A, B, F[X] <: Iterable[X]](implicit
+    intoAB: Into[A, B],
+    ct: scala.reflect.ClassTag[B]
+  ): Into[F[A], Array[B]] = { (a: F[A]) =>
+    val results = a.map(intoAB.into).toList
+    sequence(results).map(_.toArray)
+  }
+
+  implicit def arrayToArray[A, B](implicit
+    intoAB: Into[A, B],
+    ct: scala.reflect.ClassTag[B]
+  ): Into[Array[A], Array[B]] = { (a: Array[A]) =>
+    val results = a.map(intoAB.into).toList
+    sequence(results).map(_.toArray)
+  }
+
+  protected def sequence[A](list: List[Either[SchemaError, A]]): Either[SchemaError, List[A]] = {
+    val successBuilder = List.newBuilder[A]
+    val errorBuilder   = List.newBuilder[SchemaError]
+    val iter           = list.iterator
+    while (iter.hasNext) {
+      iter.next() match {
+        case Right(a) => successBuilder.addOne(a)
+        case Left(e)  => errorBuilder.addOne(e)
+      }
+    }
+    val errors = errorBuilder.result()
+    if (errors.isEmpty) new Right(successBuilder.result())
+    else new Left(errors.reduceLeft(_ ++ _))
+  }
+}

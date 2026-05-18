@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.json
 
 import com.github.plokhotnyuk.jsoniter_scala.core._
@@ -7,14 +23,15 @@ import zio.blocks.BaseBenchmark
 import zio.blocks.schema.Schema
 import zio.schema.{DeriveSchema, Schema as ZIOSchema}
 import java.nio.charset.StandardCharsets.UTF_8
+import scala.compiletime.uninitialized
 
 class JsonListOfRecordsBenchmark extends BaseBenchmark {
   import JsonListOfRecordsDomain._
 
   @Param(Array("1", "10", "100", "1000", "10000", "100000"))
   var size: Int                         = 100
-  var listOfRecords: List[Person]       = _
-  var encodedListOfRecords: Array[Byte] = _
+  var listOfRecords: List[Person]       = uninitialized
+  var encodedListOfRecords: Array[Byte] = uninitialized
 
   @Setup
   def setup(): Unit = {
@@ -28,7 +45,7 @@ class JsonListOfRecordsBenchmark extends BaseBenchmark {
   @Benchmark
   def readingZioBlocks: List[Person] = zioBlocksCodec.decode(encodedListOfRecords) match {
     case Right(value) => value
-    case Left(error)  => sys.error(error.getMessage)
+    case Left(error)  => throw error
   }
 
   @Benchmark
@@ -69,7 +86,7 @@ object JsonListOfRecordsDomain {
 
   implicit val jsoniterScalaCodec: JsonValueCodec[List[Person]] = JsonCodecMaker.make
 
-  val zioBlocksCodec: JsonBinaryCodec[List[Person]] = Schema.derived.derive(JsonFormat.deriver)
+  val zioBlocksCodec = Schema.derived[List[Person]].derive(JsonFormat)
 
   implicit val zioJsonCodec: zio.json.JsonCodec[Person] = zio.json.DeriveJsonCodec.gen
 

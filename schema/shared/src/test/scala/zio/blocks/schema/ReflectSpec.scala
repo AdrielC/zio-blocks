@@ -1,13 +1,39 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
+import zio.blocks.chunk.Chunk
+import zio.blocks.docs.{Doc, Paragraph, Inline}
 import zio.blocks.schema.Reflect.Primitive
 import zio.blocks.schema.binding._
+import zio.blocks.typeid.{Owner, TypeId}
 import zio.test.Assertion._
 import zio.test._
 import java.time._
 import java.util.{Currency, UUID}
 
-object ReflectSpec extends ZIOSpecDefault {
+// Test fixtures for TypeSearch and SchemaSearch tests
+case class PersonRecord(name: String, age: Int)
+case class RecursiveNode(value: String, children: List[RecursiveNode])
+
+object ReflectSpec extends SchemaBaseSpec {
+
+  private def textDoc(s: String): Doc =
+    Doc(Chunk.single(Paragraph(Chunk.single(Inline.Text(s)))))
   def spec: Spec[TestEnvironment, Any] = suite("ReflectSpec")(
     suite("Reflect")(
       test("has consistent asDynamic and isDynamic") {
@@ -150,11 +176,11 @@ object ReflectSpec extends ZIOSpecDefault {
         val long1 = Primitive[Binding, Long](
           primitiveType = PrimitiveType.Long(Validation.None),
           primitiveBinding = null, // should be ignored in equals and hashCode
-          typeName = TypeName.long
+          typeId = TypeId.long
         )
         val long2 = long1.copy(primitiveType = PrimitiveType.Long(Validation.Numeric.Positive))
-        val long3 = long1.copy(typeName = TypeName(Namespace(Seq("zio", "blocks", "schema")), "Long1"))
-        val long4 = long1.copy(doc = Doc("text"))
+        val long3 = long1.copy(typeId = TypeId.nominal[Long]("Long1", Owner.fromPackagePath("zio.blocks.schema")))
+        val long4 = long1.copy(doc = textDoc("text"))
         val long5 = long1.copy(modifiers = Seq(Modifier.config("key", "value")))
         assert(long1)(equalTo(long1)) &&
         assert(long1.hashCode)(equalTo(long1.hashCode)) &&
@@ -179,12 +205,12 @@ object ReflectSpec extends ZIOSpecDefault {
       },
       test("gets and updates primitive type name") {
         val int1 = Reflect.int[Binding]
-        assert(int1.typeName)(equalTo(TypeName.int)) &&
+        assert(int1.typeId)(equalTo(TypeId.int)) &&
         assert(
           int1
-            .typeName(TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "IntWrapper"))
-            .typeName
-        )(equalTo(TypeName[Int](Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "IntWrapper")))
+            .typeId(TypeId.nominal[Int]("IntWrapper", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec")))
+            .typeId
+        )(equalTo(TypeId.nominal[Int]("IntWrapper", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec"))))
       },
       test("updates primitive default value") {
         val int1 = Reflect.int[Binding]
@@ -193,15 +219,16 @@ object ReflectSpec extends ZIOSpecDefault {
       },
       test("gets and updates primitive documentation") {
         val long1 = Reflect.long[Binding]
-        assert(long1.doc)(equalTo(Doc.Empty)) &&
-        assert(long1.doc("Long (updated)").doc)(equalTo(Doc("Long (updated)")))
+        assert(long1.doc)(equalTo(Doc.empty)) &&
+        assert(long1.doc("Long (updated)").doc)(equalTo(textDoc("Long (updated)")))
       },
       test("gets and updates primitive examples") {
         val long1 = Primitive(
           primitiveType = PrimitiveType.Long(Validation.Numeric.Positive),
-          primitiveBinding = Binding.Primitive[Long](examples = Seq(1L, 2L, 3L)),
-          typeName = TypeName.long,
-          doc = Doc("Long (positive)")
+          primitiveBinding = Binding.Primitive[Long](),
+          typeId = TypeId.long,
+          doc = textDoc("Long (positive)"),
+          storedExamples = Seq(1L, 2L, 3L).map(l => DynamicValue.Primitive(PrimitiveValue.Long(l)))
         )
         assert(long1.examples)(equalTo(Seq(1L, 2L, 3L))) &&
         assert(Reflect.int[Binding].examples(1, 2, 3).examples)(equalTo(Seq(1, 2, 3)))
@@ -220,9 +247,11 @@ object ReflectSpec extends ZIOSpecDefault {
     suite("Reflect.Record")(
       test("has consistent equals and hashCode") {
         val record1 = tuple4Reflect
-        val record2 = record1.copy(typeName = TypeName(Namespace(Seq("zio", "blocks", "schema")), "Tuple4"))
+        val record2 = record1.copy(typeId =
+          TypeId.nominal[(Byte, Short, Int, Long)]("Tuple4", Owner.fromPackagePath("zio.blocks.schema"))
+        )
         val record3 = record1.copy(fields = record1.fields.reverse)
-        val record4 = record1.copy(doc = Doc("text"))
+        val record4 = record1.copy(doc = textDoc("text"))
         val record5 = record1.copy(modifiers = Seq(Modifier.config("key", "value")))
         assert(record1)(equalTo(record1)) &&
         assert(record1.hashCode)(equalTo(record1.hashCode)) &&
@@ -257,7 +286,7 @@ object ReflectSpec extends ZIOSpecDefault {
           isSome(equalTo(PrimitiveType.Long(Validation.None)))
         ) &&
         assert(record1.registers(3).usedRegisters)(equalTo(RegisterOffset(longs = 1))) &&
-        assert(record1.usedRegisters)(equalTo(record1.registers.foldLeft(0)(_ + _.usedRegisters)))
+        assert(record1.usedRegisters)(equalTo(record1.registers.foldLeft(0L)(_ + _.usedRegisters)))
       },
       test("has consistent fromDynamicValue and toDynamicValue") {
         assert(tuple4Reflect.fromDynamicValue(tuple4Reflect.toDynamicValue((1: Byte, 2: Short, 3, 4L))))(
@@ -265,24 +294,23 @@ object ReflectSpec extends ZIOSpecDefault {
         )
       },
       test("gets and updates record type name") {
-        assert(tuple4Reflect.typeName)(
-          equalTo(
-            TypeName[(Byte, Short, Int, Long)](
-              Namespace.scala,
-              "Tuple4",
-              Seq(TypeName.byte, TypeName.short, TypeName.int, TypeName.long)
-            )
-          )
+        assert(tuple4Reflect.typeId)(
+          equalTo(TypeId.of[(Byte, Short, Int, Long)])
         ) &&
         assert(
           tuple4Reflect
-            .typeName(TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "Tuple4Wrapper"))
-            .typeName
+            .typeId(
+              TypeId.nominal[(Byte, Short, Int, Long)](
+                "Tuple4Wrapper",
+                Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec")
+              )
+            )
+            .typeId
         )(
           equalTo(
-            TypeName[(Byte, Short, Int, Long)](
-              Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")),
-              "Tuple4Wrapper"
+            TypeId.nominal[(Byte, Short, Int, Long)](
+              "Tuple4Wrapper",
+              Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec")
             )
           )
         )
@@ -294,8 +322,8 @@ object ReflectSpec extends ZIOSpecDefault {
         )
       },
       test("gets and updates record documentation") {
-        assert(tuple4Reflect.doc)(equalTo(Doc.Empty)) &&
-        assert(tuple4Reflect.doc("Tuple4 (updated)").doc)(equalTo(Doc("Tuple4 (updated)")))
+        assert(tuple4Reflect.doc)(equalTo(Doc.empty)) &&
+        assert(tuple4Reflect.doc("Tuple4 (updated)").doc)(equalTo(textDoc("Tuple4 (updated)")))
       },
       test("gets and updates record examples") {
         assert(tuple4Reflect.examples)(equalTo(Seq.empty)) &&
@@ -333,10 +361,10 @@ object ReflectSpec extends ZIOSpecDefault {
           tuple4Reflect
             .modifyField("_3")(new Term.Updater[Binding] {
               override def update[S, A](input: Term[Binding, S, A]): Option[Term[Binding, S, A]] =
-                Some(input.copy(doc = Doc("updated")))
+                Some(input.copy(doc = textDoc("updated")))
             })
             .flatMap(_.fieldByName("_3")): Option[Any]
-        )(isSome(equalTo(Reflect.int[Binding].asTerm("_3").copy(doc = Doc("updated"))))) &&
+        )(isSome(equalTo(Reflect.int[Binding].asTerm("_3").copy(doc = textDoc("updated"))))) &&
         assert(tuple4Reflect.modifyField("_3")(new Term.Updater[Binding] {
           override def update[S, A](input: Term[Binding, S, A]): Option[Term[Binding, S, A]] = None
         }): Option[Any])(isNone) &&
@@ -363,18 +391,24 @@ object ReflectSpec extends ZIOSpecDefault {
         assert(eitherReflect.fromDynamicValue(eitherReflect.toDynamicValue(Left(0))))(isRight(equalTo(Left(0))))
       },
       test("gets and updates variant type name") {
-        assert(eitherReflect.typeName)(
-          equalTo(
-            TypeName[Either[Int, Long]](Namespace(Seq("scala", "util")), "Either", Seq(TypeName.int, TypeName.long))
-          )
+        assert(eitherReflect.typeId)(
+          equalTo(TypeId.of[Either[Int, Long]])
         ) &&
         assert(
           eitherReflect
-            .typeName(TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "EitherWrapper"))
-            .typeName
+            .typeId(
+              TypeId.nominal[Either[Int, Long]](
+                "EitherWrapper",
+                Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec")
+              )
+            )
+            .typeId
         )(
           equalTo(
-            TypeName[Either[Int, Long]](Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "EitherWrapper")
+            TypeId.nominal[Either[Int, Long]](
+              "EitherWrapper",
+              Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec")
+            )
           )
         )
       },
@@ -383,8 +417,8 @@ object ReflectSpec extends ZIOSpecDefault {
         assert(eitherReflect.defaultValue(Left(0)).getDefaultValue)(isSome(equalTo(Left(0))))
       },
       test("gets and updates variant documentation") {
-        assert(eitherReflect.doc)(equalTo(Doc.Empty)) &&
-        assert(eitherReflect.doc("Option[Int] (updated)").doc)(equalTo(Doc("Option[Int] (updated)")))
+        assert(eitherReflect.doc)(equalTo(Doc.empty)) &&
+        assert(eitherReflect.doc("Option[Int] (updated)").doc)(equalTo(textDoc("Option[Int] (updated)")))
       },
       test("gets and updates variant examples") {
         assert(eitherReflect.examples)(equalTo(Seq.empty)) &&
@@ -416,10 +450,10 @@ object ReflectSpec extends ZIOSpecDefault {
           eitherReflect
             .modifyCase("Left")(new Term.Updater[Binding] {
               override def update[S, A](input: Term[Binding, S, A]): Option[Term[Binding, S, A]] =
-                Some(input.copy(doc = Doc("updated")))
+                Some(input.copy(doc = textDoc("updated")))
             })
             .flatMap(_.caseByName("Left").map(_.doc)): Option[Any]
-        )(isSome(equalTo(Doc("updated")))) &&
+        )(isSome(equalTo(textDoc("updated")))) &&
         assert(eitherReflect.modifyCase("Left")(new Term.Updater[Binding] {
           override def update[S, A](input: Term[Binding, S, A]): Option[Term[Binding, S, A]] = None
         }): Option[Any])(isNone) &&
@@ -430,14 +464,14 @@ object ReflectSpec extends ZIOSpecDefault {
       test("has consistent equals and hashCode") {
         val sequence1 = Reflect.Sequence[Binding, Double, List](
           element = Reflect.double,
-          typeName = TypeName.list(TypeName.double),
+          typeId = TypeId.of[List[Double]],
           seqBinding = null // should be ignored in equals and hashCode
         )
         val sequence2 = sequence1.copy(element =
-          Primitive(PrimitiveType.Double(Validation.None), TypeName.double, Binding.Primitive.double, Doc("text"))
+          Primitive(PrimitiveType.Double(Validation.None), TypeId.double, Binding.Primitive.double, textDoc("text"))
         )
-        val sequence3 = sequence1.copy(typeName = TypeName[List[Double]](Namespace.scala, "List2"))
-        val sequence4 = sequence1.copy(doc = Doc("text"))
+        val sequence3 = sequence1.copy(typeId = TypeId.nominal[List[Double]]("List2", Owner.fromPackagePath("scala")))
+        val sequence4 = sequence1.copy(doc = textDoc("text"))
         val sequence5 = sequence1.copy(modifiers = Seq(Modifier.config("key", "value")))
         assert(sequence1)(equalTo(sequence1)) &&
         assert(sequence1.hashCode)(equalTo(sequence1.hashCode)) &&
@@ -457,14 +491,13 @@ object ReflectSpec extends ZIOSpecDefault {
         val sequence1 = Reflect.vector(Reflect.int[Binding])
         assert(sequence1.fromDynamicValue(sequence1.toDynamicValue(Vector(1, 2, 3))))(isRight(equalTo(Vector(1, 2, 3))))
       },
-      test("has extractors for lists, vactors, sets, and arrays") {
+      test("has extractors for lists, vectors, and sets") {
         import Reflect.Extractors._
 
         val bigInt1 = Reflect.bigInt[Binding]
         assert(Option(Reflect.list(bigInt1)).collect { case List(e) => e })(isSome(equalTo(bigInt1))) &&
         assert(Option(Reflect.vector(bigInt1)).collect { case Vector(e) => e })(isSome(equalTo(bigInt1))) &&
         assert(Option(Reflect.set(bigInt1)).collect { case Set(e) => e })(isSome(equalTo(bigInt1))) &&
-        assert(Option(Reflect.arraySeq(bigInt1)).collect { case ArraySeq(e) => e })(isSome(equalTo(bigInt1))) &&
         assert(Option(Reflect.Deferred(() => Reflect.list(bigInt1))).collect { case List(e) => e })(
           isSome(equalTo(bigInt1))
         ) &&
@@ -473,23 +506,23 @@ object ReflectSpec extends ZIOSpecDefault {
         ) &&
         assert(Option(Reflect.Deferred(() => Reflect.set(bigInt1))).collect { case Set(e) => e })(
           isSome(equalTo(bigInt1))
-        ) &&
-        assert(Option(Reflect.Deferred(() => Reflect.arraySeq(bigInt1))).collect { case ArraySeq(e) => e })(
-          isSome(equalTo(bigInt1))
         )
       },
       test("gets and updates sequence type name") {
         val sequence1 = Reflect.vector(Reflect.int[Binding])
-        assert(sequence1.typeName)(
-          equalTo(TypeName[Vector[Int]](Namespace.scalaCollectionImmutable, "Vector", Seq(TypeName.int)))
+        assert(sequence1.typeId)(
+          equalTo(TypeId.of[Vector[Int]])
         ) &&
         assert(
           sequence1
-            .typeName(TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "VectorWrapper"))
-            .typeName
+            .typeId(
+              TypeId
+                .nominal[Vector[Int]]("VectorWrapper", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec"))
+            )
+            .typeId
         )(
           equalTo(
-            TypeName[Vector[Int]](Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "VectorWrapper")
+            TypeId.nominal[Vector[Int]]("VectorWrapper", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec"))
           )
         )
       },
@@ -499,18 +532,26 @@ object ReflectSpec extends ZIOSpecDefault {
         assert(sequence1.defaultValue(Vector.empty).getDefaultValue)(isSome(equalTo(Vector.empty)))
       },
       test("gets and updates sequence documentation") {
-        val sequence1 = Reflect.arraySeq(Reflect.int[Binding])
-        assert(sequence1.doc)(equalTo(Doc.Empty)) &&
-        assert(sequence1.doc("Array (updated)").doc)(equalTo(Doc("Array (updated)")))
+        val sequence1 = Reflect.seq(Reflect.int[Binding])
+        assert(sequence1.doc)(equalTo(Doc.empty)) &&
+        assert(sequence1.doc("Seq (updated)").doc)(equalTo(textDoc("Seq (updated)")))
       },
       test("gets and updates sequence examples") {
         val sequence1 = Reflect.Sequence[Binding, Double, List](
           element = Reflect.double,
-          typeName = TypeName.list(TypeName.double),
+          typeId = TypeId.of[List[Double]],
           seqBinding = Binding.Seq[List, Double](
             constructor = SeqConstructor.listConstructor,
-            deconstructor = SeqDeconstructor.listDeconstructor,
-            examples = Seq(List(0.1, 0.2, 0.3))
+            deconstructor = SeqDeconstructor.listDeconstructor
+          ),
+          storedExamples = Seq(
+            DynamicValue.Sequence(
+              zio.blocks.chunk.Chunk(
+                DynamicValue.Primitive(PrimitiveValue.Double(0.1)),
+                DynamicValue.Primitive(PrimitiveValue.Double(0.2)),
+                DynamicValue.Primitive(PrimitiveValue.Double(0.3))
+              )
+            )
           )
         )
         assert(sequence1.examples)(equalTo(Seq(List(0.1, 0.2, 0.3)))) &&
@@ -532,21 +573,21 @@ object ReflectSpec extends ZIOSpecDefault {
         val map1 = Reflect.Map[Binding, Short, Float, Map](
           key = Reflect.short,
           value = Reflect.float,
-          typeName = TypeName.map(TypeName.short, TypeName.float),
+          typeId = TypeId.of[Map[Short, Float]],
           mapBinding = null // should be ignored in equals and hashCode
         )
         val map2 = map1.copy(key =
           Primitive(
             PrimitiveType.Short(Validation.Numeric.Positive),
-            TypeName.short,
+            TypeId.short,
             Binding.Primitive.short
           )
         )
         val map3 = map1.copy(value =
-          Primitive(PrimitiveType.Float(Validation.None), TypeName.float, Binding.Primitive.float, Doc("text"))
+          Primitive(PrimitiveType.Float(Validation.None), TypeId.float, Binding.Primitive.float, textDoc("text"))
         )
-        val map4 = map1.copy(typeName = TypeName[Map[Short, Float]](Namespace.scala, "Map2"))
-        val map5 = map1.copy(doc = Doc("text"))
+        val map4 = map1.copy(typeId = TypeId.nominal[Map[Short, Float]]("Map2", Owner.fromPackagePath("scala")))
+        val map5 = map1.copy(doc = textDoc("text"))
         val map6 = map1.copy(modifiers = Seq(Modifier.config("key", "value")))
         assert(map1)(equalTo(map1)) &&
         assert(map1.hashCode)(equalTo(map1.hashCode)) &&
@@ -572,16 +613,19 @@ object ReflectSpec extends ZIOSpecDefault {
       },
       test("gets and updates map type name") {
         val map1 = Reflect.map(Reflect.int[Binding], Reflect.long[Binding])
-        assert(map1.typeName)(
-          equalTo(TypeName[Map[Int, Long]](Namespace.scalaCollectionImmutable, "Map", Seq(TypeName.int, TypeName.long)))
+        assert(map1.typeId)(
+          equalTo(TypeId.of[Map[Int, Long]])
         ) &&
         assert(
           map1
-            .typeName(TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "MapWrapper"))
-            .typeName
+            .typeId(
+              TypeId
+                .nominal[Map[Int, Long]]("MapWrapper", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec"))
+            )
+            .typeId
         )(
           equalTo(
-            TypeName[Map[Int, Long]](Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "MapWrapper")
+            TypeId.nominal[Map[Int, Long]]("MapWrapper", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec"))
           )
         )
       },
@@ -594,24 +638,32 @@ object ReflectSpec extends ZIOSpecDefault {
         val map1 = Reflect.Map[Binding, Int, Long, Map](
           key = Reflect.int,
           value = Reflect.long,
-          typeName = TypeName.map(TypeName.int, TypeName.long),
+          typeId = TypeId.of[Map[Int, Long]],
           mapBinding = null, // should be ignored in equals and hashCode
-          doc = Doc("Map of Int to Long")
+          doc = textDoc("Map of Int to Long")
         )
-        assert(map1.doc)(equalTo(Doc("Map of Int to Long"))) &&
+        assert(map1.doc)(equalTo(textDoc("Map of Int to Long"))) &&
         assert(Reflect.map(Reflect.int[Binding], Reflect.long[Binding]).doc("Map (updated)").doc)(
-          equalTo(Doc("Map (updated)"))
+          equalTo(textDoc("Map (updated)"))
         )
       },
       test("gets and updates map examples") {
         val map1 = Reflect.Map[Binding, Int, Long, Map](
           key = Reflect.int,
           value = Reflect.long,
-          typeName = TypeName.map(TypeName.int, TypeName.long),
+          typeId = TypeId.of[Map[Int, Long]],
           mapBinding = Binding.Map[Map, Int, Long](
             constructor = MapConstructor.map,
-            deconstructor = MapDeconstructor.map,
-            examples = Map(1 -> 1L, 2 -> 2L, 3 -> 3L) :: Nil
+            deconstructor = MapDeconstructor.map
+          ),
+          storedExamples = Seq(
+            DynamicValue.Map(
+              zio.blocks.chunk.Chunk(
+                (DynamicValue.Primitive(PrimitiveValue.Int(1)), DynamicValue.Primitive(PrimitiveValue.Long(1L))),
+                (DynamicValue.Primitive(PrimitiveValue.Int(2)), DynamicValue.Primitive(PrimitiveValue.Long(2L))),
+                (DynamicValue.Primitive(PrimitiveValue.Int(3)), DynamicValue.Primitive(PrimitiveValue.Long(3L)))
+              )
+            )
           )
         )
         assert(map1.examples)(equalTo(Map(1 -> 1L, 2 -> 2L, 3 -> 3L) :: Nil)) &&
@@ -634,7 +686,7 @@ object ReflectSpec extends ZIOSpecDefault {
       test("has consistent equals and hashCode") {
         val dynamic1 = Reflect.dynamic[Binding]
         val dynamic2 = dynamic1.copy(dynamicBinding = null: Binding.Dynamic)
-        val dynamic3 = dynamic1.copy(doc = Doc("text"))
+        val dynamic3 = dynamic1.copy(doc = textDoc("text"))
         val dynamic4 = dynamic1.copy(modifiers = Seq(Modifier.config("key", "value")))
         assert(dynamic1)(equalTo(dynamic1)) &&
         assert(dynamic1.hashCode)(equalTo(dynamic1.hashCode)) &&
@@ -658,14 +710,18 @@ object ReflectSpec extends ZIOSpecDefault {
       },
       test("gets and updates dynamic type name") {
         val dynamic1 = Reflect.dynamic[Binding]
-        assert(dynamic1.typeName)(equalTo(TypeName.dynamicValue)) &&
+        assert(dynamic1.typeId)(equalTo(TypeId.of[DynamicValue])) &&
         assert(
           dynamic1
-            .typeName(TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "DynamicWrapper"))
-            .typeName
+            .typeId(
+              TypeId
+                .nominal[DynamicValue]("DynamicWrapper", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec"))
+            )
+            .typeId
         )(
           equalTo(
-            TypeName[DynamicValue](Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "DynamicWrapper")
+            TypeId
+              .nominal[DynamicValue]("DynamicWrapper", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec"))
           )
         )
       },
@@ -678,12 +734,13 @@ object ReflectSpec extends ZIOSpecDefault {
       },
       test("gets and updates dynamic documentation") {
         val dynamic1 = Reflect.dynamic[Binding]
-        assert(dynamic1.doc)(equalTo(Doc.Empty)) &&
-        assert(dynamic1.doc("Dynamic (updated)").doc)(equalTo(Doc("Dynamic (updated)")))
+        assert(dynamic1.doc)(equalTo(Doc.empty)) &&
+        assert(dynamic1.doc("Dynamic (updated)").doc)(equalTo(textDoc("Dynamic (updated)")))
       },
       test("gets and updates dynamic examples") {
         val dynamic1 = Reflect.Dynamic[Binding](
-          dynamicBinding = Binding.Dynamic(examples = DynamicValue.Primitive(PrimitiveValue.Int(0)) :: Nil)
+          dynamicBinding = Binding.Dynamic(),
+          storedExamples = DynamicValue.Primitive(PrimitiveValue.Int(0)) :: Nil
         )
         assert(dynamic1.examples)(equalTo(DynamicValue.Primitive(PrimitiveValue.Int(0)) :: Nil)) &&
         assert(dynamic1.examples(DynamicValue.Primitive(PrimitiveValue.Int(1))).examples)(
@@ -704,9 +761,10 @@ object ReflectSpec extends ZIOSpecDefault {
     suite("Reflect.Wrapper")(
       test("has consistent equals and hashCode") {
         val wrapper1 = wrapperReflect
-        val wrapper2 = wrapper1.copy(typeName = TypeName(Namespace(Seq("zio", "blocks", "schema")), "Tuple4"))
+        val wrapper2 =
+          wrapper1.copy(typeId = TypeId.nominal[Wrapper]("Tuple4", Owner.fromPackagePath("zio.blocks.schema")))
         val wrapper3 = wrapper1.copy(wrapped = Reflect.long[Binding].doc("Long (updated)"))
-        val wrapper4 = wrapper1.copy(doc = Doc("text"))
+        val wrapper4 = wrapper1.copy(doc = textDoc("text"))
         val wrapper5 = wrapper1.copy(modifiers = Seq(Modifier.config("key", "value")))
         assert(wrapper1)(equalTo(wrapper1)) &&
         assert(wrapper1.hashCode)(equalTo(wrapper1.hashCode)) &&
@@ -726,23 +784,60 @@ object ReflectSpec extends ZIOSpecDefault {
           isRight(equalTo(Wrapper(4L)))
         )
       },
+      test("return traces for error message") {
+        case class PositiveInt private (value: Int)
+
+        object PositiveInt {
+          def make(n: Int): PositiveInt =
+            if (n > 0) PositiveInt(n)
+            else throw SchemaError.validationFailed(s"expected a positive integer, got $n")
+
+          implicit val schema: Schema[PositiveInt] =
+            Schema[Int].transform(make, _.value)
+        }
+
+        case class Product(name: String, quantity: PositiveInt, price: PositiveInt)
+
+        object Product {
+          implicit val schema: Schema[Product] = Schema.derived[Product]
+        }
+
+        case class ShoppingCart(items: List[Product])
+
+        object ShoppingCart {
+          implicit val schema: Schema[ShoppingCart] = Schema.derived[ShoppingCart]
+        }
+
+        val dv = DynamicValue.Record(
+          "items" -> DynamicValue.Sequence(
+            DynamicValue.Record(
+              "name"     -> DynamicValue.string("Gadget"),
+              "quantity" -> DynamicValue.int(0),
+              "price"    -> DynamicValue.int(199)
+            )
+          )
+        )
+
+        val result = Schema[ShoppingCart].fromDynamicValue(dv).swap.map(_.message)
+        assert(result)(isRight(equalTo("expected a positive integer, got 0 at: .items.each.at(0).quantity.wrapped")))
+      },
       test("gets and updates wrapper type name") {
-        assert(wrapperReflect.typeName)(
-          equalTo(TypeName[Wrapper](Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "Wrapper"))
+        assert(wrapperReflect.typeId)(
+          equalTo(TypeId.nominal[Wrapper]("Wrapper", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec")))
         ) &&
         assert(
           wrapperReflect
-            .typeName(TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "Wrapper2"))
-            .typeName
-        )(equalTo(TypeName[Wrapper](Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "Wrapper2")))
+            .typeId(TypeId.nominal[Wrapper]("Wrapper2", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec")))
+            .typeId
+        )(equalTo(TypeId.nominal[Wrapper]("Wrapper2", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec"))))
       },
       test("gets and updates wrapper default value") {
         assert(wrapperReflect.getDefaultValue)(isNone) &&
         assert(wrapperReflect.defaultValue(Wrapper(4L)).getDefaultValue)(isSome(equalTo(Wrapper(4L))))
       },
       test("gets and updates wrapper documentation") {
-        assert(wrapperReflect.doc)(equalTo(Doc.Empty)) &&
-        assert(wrapperReflect.doc("Tuple4 (updated)").doc)(equalTo(Doc("Tuple4 (updated)")))
+        assert(wrapperReflect.doc)(equalTo(Doc.empty)) &&
+        assert(wrapperReflect.doc("Tuple4 (updated)").doc)(equalTo(textDoc("Tuple4 (updated)")))
       },
       test("gets and updates wrapper examples") {
         assert(wrapperReflect.examples)(equalTo(Seq.empty)) &&
@@ -763,7 +858,7 @@ object ReflectSpec extends ZIOSpecDefault {
         val deferred1 = Reflect.Deferred[Binding, Int](() => Reflect.int)
         val deferred2 = Reflect.Deferred[Binding, Int](() => Reflect.int)
         val deferred3 = Reflect.int[Binding]
-        val deferred4 = Primitive(PrimitiveType.Int(Validation.Numeric.Positive), TypeName.int, Binding.Primitive.int)
+        val deferred4 = Primitive(PrimitiveType.Int(Validation.Numeric.Positive), TypeId.int, Binding.Primitive.int)
         val deferred5 = Reflect.Deferred[Binding, Int](() => deferred4)
         assert(deferred1)(equalTo(deferred1)) &&
         assert(deferred1.hashCode)(equalTo(deferred1.hashCode)) &&
@@ -788,12 +883,12 @@ object ReflectSpec extends ZIOSpecDefault {
       },
       test("gets and updates deferred type name") {
         val deferred1 = Reflect.Deferred[Binding, Year](() => Reflect.year)
-        assert(deferred1.typeName)(equalTo(TypeName.year)) &&
+        assert(deferred1.typeId)(equalTo(TypeId.year)) &&
         assert(
           deferred1
-            .typeName(TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "YearWrapper"))
-            .typeName
-        )(equalTo(TypeName[Year](Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "YearWrapper")))
+            .typeId(TypeId.nominal[Year]("YearWrapper", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec")))
+            .typeId
+        )(equalTo(TypeId.nominal[Year]("YearWrapper", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec"))))
       },
       test("gets and updates deferred default value") {
         val deferred1 = Reflect.Deferred[Binding, YearMonth](() => Reflect.yearMonth)
@@ -802,8 +897,8 @@ object ReflectSpec extends ZIOSpecDefault {
       },
       test("gets and updates deferred documentation") {
         val deferred1 = Reflect.Deferred[Binding, Currency](() => Reflect.currency)
-        assert(deferred1.doc)(equalTo(Doc.Empty)) &&
-        assert(deferred1.doc("Currency (updated)").doc)(equalTo(Doc("Currency (updated)")))
+        assert(deferred1.doc)(equalTo(Doc.empty)) &&
+        assert(deferred1.doc("Currency (updated)").doc)(equalTo(textDoc("Currency (updated)")))
       },
       test("gets and updates deferred examples") {
         val deferred1 = Reflect.Deferred[Binding, Month](() => Reflect.month)
@@ -839,7 +934,326 @@ object ReflectSpec extends ZIOSpecDefault {
         assert(deferred1.isMap)(equalTo(false)) &&
         assert(deferred1.asWrapperUnknown)(isNone) &&
         assert(deferred1.isWrapper)(equalTo(false)) &&
-        assert(deferred1.typeName)(equalTo(null))
+        assert(deferred1.typeId)(equalTo(TypeId.nominal[Any]("<deferred-cycle>", Owner.Root)))
+      }
+    ),
+    suite("Reflect.get with TypeSearch")(
+      test("TypeSearch finds direct type match at root") {
+        val intReflect = Reflect.int[Binding]
+        val optic      = DynamicOptic.root.search[Int]
+        assert(intReflect.get(optic))(isSome(equalTo(intReflect)))
+      },
+      test("TypeSearch finds field of matching type in Record") {
+        val optic = DynamicOptic.root.search[Int]
+        // tuple4Reflect is (Byte, Short, Int, Long), Int is at index 2
+        val result = tuple4Reflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.int)))
+      },
+      test("TypeSearch finds nested type in Record") {
+        // Create a nested structure: record containing record containing Int
+        val outerRecord = Schema.derived[(Boolean, (Int, String))].reflect
+        val optic       = DynamicOptic.root.search[Int]
+        val result      = outerRecord.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.int)))
+      },
+      test("TypeSearch finds case payload type in Variant") {
+        // eitherReflect is Either[Int, Long]
+        val optic  = DynamicOptic.root.search[Int]
+        val result = eitherReflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.int)))
+      },
+      test("TypeSearch finds element type in Sequence") {
+        val listReflect = Reflect.list(Reflect.int[Binding])
+        val optic       = DynamicOptic.root.search[Int]
+        val result      = listReflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.int)))
+      },
+      test("TypeSearch finds value type in Map") {
+        val mapReflect = Reflect.map(Reflect.string[Binding], Reflect.long[Binding])
+        val optic      = DynamicOptic.root.search[Long]
+        val result     = mapReflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.long)))
+      },
+      test("TypeSearch finds key type in Map") {
+        val mapReflect = Reflect.map(Reflect.string[Binding], Reflect.long[Binding])
+        val optic      = DynamicOptic.root.search[String]
+        val result     = mapReflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.string)))
+      },
+      test("TypeSearch finds wrapped type in Wrapper") {
+        val optic  = DynamicOptic.root.search[Long]
+        val result = wrapperReflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.long)))
+      },
+      test("TypeSearch returns None for no matches") {
+        val optic  = DynamicOptic.root.search[Float]
+        val result = tuple4Reflect.get(optic)
+        assert(result)(isNone)
+      },
+      test("TypeSearch handles recursive types without infinite loop") {
+        // Create a recursive structure using Deferred
+        lazy val recursiveSchema: Schema[RecursiveNode] = Schema.derived[RecursiveNode]
+        val optic                                       = DynamicOptic.root.search[String]
+        val result                                      = recursiveSchema.reflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.string)))
+      },
+      test("TypeSearch with path composition: field then search") {
+        val outerRecord = Schema.derived[(Boolean, (Int, String))].reflect
+        val optic       = DynamicOptic.root.field("_2").search[String]
+        val result      = outerRecord.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.string)))
+      },
+      test("TypeSearch with path composition: search then field") {
+        // Search for a record type, then access a field within it
+        val nestedRecord = Schema.derived[(Int, (String, Long))].reflect
+        // The inner (String, Long) tuple's field _1 is String
+        val tupleTypeId = TypeId.of[(String, Long)]
+        val optic       = DynamicOptic.root.search(tupleTypeId).field("_1")
+        val result      = nestedRecord.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.string)))
+      },
+      test("TypeSearch returns None when all Variant cases miss") {
+        // eitherReflect is Either[Int, Long] — search for Float which is in neither case
+        val optic  = DynamicOptic.root.search[Float]
+        val result = eitherReflect.get(optic)
+        assert(result)(isNone)
+      },
+      test("TypeSearch returns None when Sequence element doesn't match") {
+        val listReflect = Reflect.list(Reflect.int[Binding])
+        val optic       = DynamicOptic.root.search[Float]
+        val result      = listReflect.get(optic)
+        assert(result)(isNone)
+      },
+      test("TypeSearch returns None when Map neither key nor value matches") {
+        val mapReflect = Reflect.map(Reflect.string[Binding], Reflect.long[Binding])
+        val optic      = DynamicOptic.root.search[Float]
+        val result     = mapReflect.get(optic)
+        assert(result)(isNone)
+      },
+      test("TypeSearch returns None when Wrapper wrapped doesn't match") {
+        val optic  = DynamicOptic.root.search[Float]
+        val result = wrapperReflect.get(optic)
+        assert(result)(isNone)
+      },
+      test("TypeSearch returns None on Dynamic terminal node") {
+        val optic  = DynamicOptic.root.search[Float]
+        val result = Reflect.dynamic[Binding].get(optic)
+        assert(result)(isNone)
+      }
+    ),
+    suite("Reflect.get with SchemaSearch")(
+      test("SchemaSearch with Wildcard matches root") {
+        val intReflect = Reflect.int[Binding]
+        val optic      = DynamicOptic.root.searchSchema(SchemaRepr.Wildcard)
+        assert(intReflect.get(optic))(isSome(equalTo(intReflect)))
+      },
+      test("SchemaSearch with Primitive pattern matches primitive type") {
+        val optic  = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("int"))
+        val result = tuple4Reflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.int)))
+      },
+      test("SchemaSearch with Primitive pattern is case-insensitive") {
+        val optic  = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("INT"))
+        val result = tuple4Reflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.int)))
+      },
+      test("SchemaSearch with Nominal pattern matches by type name") {
+        val optic  = DynamicOptic.root.searchSchema(SchemaRepr.Nominal("Int"))
+        val result = tuple4Reflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.int)))
+      },
+      test("SchemaSearch with Record pattern using subset matching") {
+        // Create a record with name: String and age: Int
+        val personSchema = Schema.derived[PersonRecord]
+        val pattern      = SchemaRepr.Record(Chunk(("name", SchemaRepr.Primitive("string"))))
+        val optic        = DynamicOptic.root.searchSchema(pattern)
+        val result       = personSchema.reflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.of[PersonRecord])))
+      },
+      test("SchemaSearch with Sequence pattern matches element type") {
+        val listReflect = Reflect.list(Reflect.string[Binding])
+        val pattern     = SchemaRepr.Sequence(SchemaRepr.Primitive("string"))
+        val optic       = DynamicOptic.root.searchSchema(pattern)
+        assert(listReflect.get(optic))(isSome(equalTo(listReflect)))
+      },
+      test("SchemaSearch with Map pattern matches key and value types") {
+        val mapReflect = Reflect.map(Reflect.string[Binding], Reflect.int[Binding])
+        val pattern    = SchemaRepr.Map(SchemaRepr.Primitive("string"), SchemaRepr.Primitive("int"))
+        val optic      = DynamicOptic.root.searchSchema(pattern)
+        assert(mapReflect.get(optic))(isSome(equalTo(mapReflect)))
+      },
+      test("SchemaSearch returns None for no matches") {
+        val optic  = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("uuid"))
+        val result = tuple4Reflect.get(optic)
+        assert(result)(isNone)
+      },
+      test("SchemaSearch handles recursive types without infinite loop") {
+        lazy val recursiveSchema: Schema[RecursiveNode] = Schema.derived[RecursiveNode]
+        val pattern                                     = SchemaRepr.Primitive("string")
+        val optic                                       = DynamicOptic.root.searchSchema(pattern)
+        val result                                      = recursiveSchema.reflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.string)))
+      },
+      test("SchemaSearch with path composition works correctly") {
+        val nestedSchema = Schema.derived[(Int, PersonRecord)].reflect
+        val pattern      = SchemaRepr.Primitive("string")
+        val optic        = DynamicOptic.root.field("_2").searchSchema(pattern)
+        val result       = nestedSchema.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.string)))
+      },
+      test("SchemaSearch Primitive pattern matches boolean") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("boolean"))
+        assert(Reflect.boolean[Binding].get(optic))(isSome(equalTo(Reflect.boolean[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches byte") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("byte"))
+        assert(Reflect.byte[Binding].get(optic))(isSome(equalTo(Reflect.byte[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches short") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("short"))
+        assert(Reflect.short[Binding].get(optic))(isSome(equalTo(Reflect.short[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches long") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("long"))
+        assert(Reflect.long[Binding].get(optic))(isSome(equalTo(Reflect.long[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches float") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("float"))
+        assert(Reflect.float[Binding].get(optic))(isSome(equalTo(Reflect.float[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches double") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("double"))
+        assert(Reflect.double[Binding].get(optic))(isSome(equalTo(Reflect.double[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches char") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("char"))
+        assert(Reflect.char[Binding].get(optic))(isSome(equalTo(Reflect.char[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches bigint") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("bigint"))
+        assert(Reflect.bigInt[Binding].get(optic))(isSome(equalTo(Reflect.bigInt[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches bigdecimal") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("bigdecimal"))
+        assert(Reflect.bigDecimal[Binding].get(optic))(isSome(equalTo(Reflect.bigDecimal[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches uuid") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("uuid"))
+        assert(Reflect.uuid[Binding].get(optic))(isSome(equalTo(Reflect.uuid[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches currency") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("currency"))
+        assert(Reflect.currency[Binding].get(optic))(isSome(equalTo(Reflect.currency[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches instant") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("instant"))
+        assert(Reflect.instant[Binding].get(optic))(isSome(equalTo(Reflect.instant[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches localdate") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("localdate"))
+        assert(Reflect.localDate[Binding].get(optic))(isSome(equalTo(Reflect.localDate[Binding])))
+      },
+      test("SchemaSearch Primitive pattern matches duration") {
+        val optic = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("duration"))
+        assert(Reflect.duration[Binding].get(optic))(isSome(equalTo(Reflect.duration[Binding])))
+      },
+      test("SchemaSearch Optional pattern matches Option type") {
+        val optionReflect = Schema[Option[Int]].reflect
+        val pattern       = SchemaRepr.Optional(SchemaRepr.Primitive("int"))
+        val optic         = DynamicOptic.root.searchSchema(pattern)
+        val result        = optionReflect.get(optic)
+        assert(result)(isSome)
+      },
+      test("SchemaSearch Primitive pattern returns false for non-Primitive node") {
+        // PersonRecord has name: String and age: Int — no UUID field anywhere
+        val optic  = DynamicOptic.root.searchSchema(SchemaRepr.Primitive("uuid"))
+        val result = Schema.derived[PersonRecord].reflect.get(optic)
+        assert(result)(isNone)
+      },
+      test("SchemaSearch Record pattern does not match when field is missing") {
+        val pattern = SchemaRepr.Record(Chunk(("nonexistent", SchemaRepr.Primitive("string"))))
+        val optic   = DynamicOptic.root.searchSchema(pattern)
+        val result  = Schema.derived[PersonRecord].reflect.get(optic)
+        assert(result)(isNone)
+      },
+      test("SchemaSearch Record pattern does not match when field type is wrong") {
+        // PersonRecord.name is String, not Int
+        val pattern = SchemaRepr.Record(Chunk(("name", SchemaRepr.Primitive("int"))))
+        val optic   = DynamicOptic.root.searchSchema(pattern)
+        val result  = Schema.derived[PersonRecord].reflect.get(optic)
+        assert(result)(isNone)
+      },
+      test("SchemaSearch Record pattern does not match non-Record node") {
+        val pattern = SchemaRepr.Record(Chunk(("name", SchemaRepr.Primitive("string"))))
+        val optic   = DynamicOptic.root.searchSchema(pattern)
+        val result  = Reflect.int[Binding].get(optic)
+        assert(result)(isNone)
+      },
+      test("SchemaSearch Sequence pattern does not match when element type differs") {
+        val listReflect = Reflect.list(Reflect.string[Binding])
+        val pattern     = SchemaRepr.Sequence(SchemaRepr.Primitive("int"))
+        val optic       = DynamicOptic.root.searchSchema(pattern)
+        val result      = listReflect.get(optic)
+        assert(result)(isNone)
+      },
+      test("SchemaSearch Map pattern does not match when key type differs") {
+        val mapReflect = Reflect.map(Reflect.string[Binding], Reflect.int[Binding])
+        val pattern    = SchemaRepr.Map(SchemaRepr.Primitive("int"), SchemaRepr.Primitive("int"))
+        val optic      = DynamicOptic.root.searchSchema(pattern)
+        val result     = mapReflect.get(optic)
+        assert(result)(isNone)
+      },
+      test("SchemaSearch Map pattern does not match when value type differs") {
+        val mapReflect = Reflect.map(Reflect.string[Binding], Reflect.int[Binding])
+        val pattern    = SchemaRepr.Map(SchemaRepr.Primitive("string"), SchemaRepr.Primitive("string"))
+        val optic      = DynamicOptic.root.searchSchema(pattern)
+        val result     = mapReflect.get(optic)
+        assert(result)(isNone)
+      },
+      test("SchemaSearch Nominal pattern does not match different type name") {
+        val optic  = DynamicOptic.root.searchSchema(SchemaRepr.Nominal("NonExistent"))
+        val result = Reflect.int[Binding].get(optic)
+        assert(result)(isNone)
+      },
+      test("SchemaSearch DFS traverses through Variant cases") {
+        // eitherReflect is Either[Int, Long] — search for Int inside Variant
+        val pattern = SchemaRepr.Primitive("int")
+        val optic   = DynamicOptic.root.searchSchema(pattern)
+        val result  = eitherReflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.int)))
+      },
+      test("SchemaSearch DFS traverses through Wrapper nodes") {
+        // wrapperReflect wraps Long
+        val pattern = SchemaRepr.Primitive("long")
+        val optic   = DynamicOptic.root.searchSchema(pattern)
+        val result  = wrapperReflect.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.long)))
+      },
+      test("SchemaSearch DFS traverses through Map as child node") {
+        // Root is Record, Map is a child field — exercises DFS into Map children
+        val schema  = Schema.derived[(Boolean, Map[String, Int])].reflect
+        val pattern = SchemaRepr.Primitive("int")
+        val optic   = DynamicOptic.root.searchSchema(pattern)
+        val result  = schema.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.int)))
+      },
+      test("SchemaSearch returns None on Dynamic terminal node") {
+        val pattern = SchemaRepr.Primitive("string")
+        val optic   = DynamicOptic.root.searchSchema(pattern)
+        val result  = Reflect.dynamic[Binding].get(optic)
+        assert(result)(isNone)
+      },
+      test("SchemaSearch with path composition: searchSchema then field") {
+        val nestedSchema = Schema.derived[(Int, PersonRecord)].reflect
+        val pattern      = SchemaRepr.Record(
+          Chunk(
+            ("name", SchemaRepr.Primitive("string")),
+            ("age", SchemaRepr.Primitive("int"))
+          )
+        )
+        val optic  = DynamicOptic.root.searchSchema(pattern).field("name")
+        val result = nestedSchema.get(optic)
+        assert(result.map(_.typeId))(isSome(equalTo(TypeId.string)))
       }
     )
   )
@@ -850,10 +1264,9 @@ object ReflectSpec extends ZIOSpecDefault {
     Schema.derived[Either[Int, Long]].reflect.asVariant.get
   val wrapperReflect: Reflect.Wrapper[Binding, Wrapper, Long] = new Reflect.Wrapper(
     wrapped = Schema[Long].reflect,
-    typeName = TypeName(Namespace(Seq("zio", "blocks", "schema"), Seq("ReflectSpec")), "Wrapper"),
-    wrapperPrimitiveType = None,
+    typeId = TypeId.nominal[Wrapper]("Wrapper", Owner.fromPackagePath("zio.blocks.schema").term("ReflectSpec")),
     wrapperBinding = Binding.Wrapper(
-      wrap = (x: Long) => Right(Wrapper(x)),
+      wrap = (x: Long) => Wrapper(x),
       unwrap = (x: Wrapper) => x.value
     )
   )

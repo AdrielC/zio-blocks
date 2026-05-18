@@ -1,9 +1,25 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
 import zio.test.Assertion._
 import zio.test._
 
-object SchemaMetadataSpec extends ZIOSpecDefault {
+object SchemaMetadataSpec extends SchemaBaseSpec {
   case class Record(s: String)
 
   object Record extends CompanionOptics[Record] {
@@ -27,6 +43,52 @@ object SchemaMetadataSpec extends ZIOSpecDefault {
       val metadata2 = metadata.removeAll(Record.s)
       assert(metadata.getAll(Record.s).length)(equalTo(1)) &&
       assert(metadata2.getAll(Record.s).length)(equalTo(0))
+    },
+    test("get returns first value") {
+      val metadata = SchemaMetadata
+        .empty[Record, IndexedSeq]
+        .add(Record.s, IndexedSeq("first"))
+        .add(Record.s, IndexedSeq("second"))
+      assert(metadata.get(Record.s))(isSome(equalTo(IndexedSeq("first"))))
+    },
+    test("get returns None for missing optic") {
+      val metadata = SchemaMetadata.empty[Record, IndexedSeq]
+      assert(metadata.get(Record.s))(isNone)
+    },
+    test("fold iterates over all values") {
+      val metadata = SchemaMetadata
+        .empty[Record, IndexedSeq]
+        .add(Record.s, IndexedSeq("a"))
+        .add(Record.s, IndexedSeq("b"))
+      val result = metadata.fold(List.empty[String]) {
+        new SchemaMetadata.Folder[Record, IndexedSeq, List[String]] {
+          def initial: List[String]                                                                 = List.empty
+          def fold[A](z: List[String], optic: Optic[Record, A], value: IndexedSeq[A]): List[String] =
+            z ++ value.asInstanceOf[IndexedSeq[String]].toList
+        }
+      }
+      assert(result)(equalTo(List("a", "b")))
+    },
+    test("empty creates empty metadata") {
+      val metadata = SchemaMetadata.empty[Record, IndexedSeq]
+      assert(metadata.size)(equalTo(0))
+    },
+    test("simple creates empty Id metadata") {
+      val metadata = SchemaMetadata.simple[Record]
+      assert(metadata.size)(equalTo(0))
+    },
+    test("bound creates empty bounded metadata") {
+      val metadata = SchemaMetadata.bound[Record, IndexedSeq]
+      assert(metadata.size)(equalTo(0))
+    },
+    test("Folder.simple creates a simple folder") {
+      val metadata = SchemaMetadata
+        .simple[Record]
+        .add(Record.s, "value1")
+        .add(Record.s, "value2")
+      val folder = SchemaMetadata.Folder.simple[Record, Int](0)((count, _) => count + 1)
+      val result = metadata.fold(folder.initial)(folder)
+      assert(result)(equalTo(2))
     }
   )
 }

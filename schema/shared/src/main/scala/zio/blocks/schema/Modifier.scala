@@ -1,7 +1,27 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
+import zio.blocks.chunk.Chunk
 import scala.annotation.meta.field
 import scala.annotation.StaticAnnotation
+import zio.blocks.schema.binding._
+import zio.blocks.schema.binding.RegisterOffset.RegisterOffset
+import zio.blocks.typeid.TypeId
 
 /**
  * A sealed trait that represents a modifier used to annotate terms or reflect
@@ -60,4 +80,205 @@ object Modifier {
    * protobuf format.
    */
   @field case class config(key: String, value: String) extends Term with Reflect
+
+  implicit lazy val transientSchema: Schema[transient] = new Schema(
+    reflect = new Reflect.Record[Binding, transient](
+      fields = Chunk.empty,
+      typeId = TypeId.of[transient],
+      recordBinding = new Binding.Record(
+        constructor = new ConstantConstructor[transient](transient()),
+        deconstructor = new ConstantDeconstructor[transient]
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val renameSchema: Schema[rename] = new Schema(
+    reflect = new Reflect.Record[Binding, rename](
+      fields = Chunk.single(Schema[String].reflect.asTerm("name")),
+      typeId = TypeId.of[rename],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[rename] {
+          def usedRegisters: RegisterOffset                            = 1
+          def construct(in: Registers, offset: RegisterOffset): rename =
+            new rename(in.getObject(offset).asInstanceOf[String])
+        },
+        deconstructor = new Deconstructor[rename] {
+          def usedRegisters: RegisterOffset                                         = 1
+          def deconstruct(out: Registers, offset: RegisterOffset, in: rename): Unit =
+            out.setObject(offset, in.name)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val aliasSchema: Schema[alias] = new Schema(
+    reflect = new Reflect.Record[Binding, alias](
+      fields = Chunk.single(Schema[String].reflect.asTerm("name")),
+      typeId = TypeId.of[alias],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[alias] {
+          def usedRegisters: RegisterOffset                           = 1
+          def construct(in: Registers, offset: RegisterOffset): alias =
+            new alias(in.getObject(offset).asInstanceOf[String])
+        },
+        deconstructor = new Deconstructor[alias] {
+          def usedRegisters: RegisterOffset                                        = 1
+          def deconstruct(out: Registers, offset: RegisterOffset, in: alias): Unit =
+            out.setObject(offset, in.name)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val configSchema: Schema[config] = new Schema(
+    reflect = new Reflect.Record[Binding, config](
+      fields = Chunk(
+        Schema[String].reflect.asTerm("key"),
+        Schema[String].reflect.asTerm("value")
+      ),
+      typeId = TypeId.of[config],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[config] {
+          def usedRegisters: RegisterOffset                            = 2
+          def construct(in: Registers, offset: RegisterOffset): config =
+            new config(
+              in.getObject(offset).asInstanceOf[String],
+              in.getObject(offset + 1).asInstanceOf[String]
+            )
+        },
+        deconstructor = new Deconstructor[config] {
+          def usedRegisters: RegisterOffset                                         = 2
+          def deconstruct(out: Registers, offset: RegisterOffset, in: config): Unit = {
+            out.setObject(offset, in.key)
+            out.setObject(offset + 1, in.value)
+          }
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val termSchema: Schema[Term] = new Schema(
+    reflect = new Reflect.Variant[Binding, Term](
+      cases = Chunk(
+        transientSchema.reflect.asTerm("transient"),
+        renameSchema.reflect.asTerm("rename"),
+        aliasSchema.reflect.asTerm("alias"),
+        configSchema.reflect.asTerm("config")
+      ),
+      typeId = TypeId.of[Term],
+      variantBinding = new Binding.Variant(
+        discriminator = new Discriminator[Term] {
+          def discriminate(a: Term): Int = a match {
+            case _: transient => 0
+            case _: rename    => 1
+            case _: alias     => 2
+            case _: config    => 3
+          }
+        },
+        matchers = Matchers(
+          new Matcher[transient] {
+            def downcastOrNull(a: Any): transient = a match {
+              case x: transient => x
+              case _            => null.asInstanceOf[transient]
+            }
+          },
+          new Matcher[rename] {
+            def downcastOrNull(a: Any): rename = a match {
+              case x: rename => x
+              case _         => null.asInstanceOf[rename]
+            }
+          },
+          new Matcher[alias] {
+            def downcastOrNull(a: Any): alias = a match {
+              case x: alias => x
+              case _        => null.asInstanceOf[alias]
+            }
+          },
+          new Matcher[config] {
+            def downcastOrNull(a: Any): config = a match {
+              case x: config => x
+              case _         => null.asInstanceOf[config]
+            }
+          }
+        )
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val reflectSchema: Schema[Reflect] = new Schema(
+    reflect = new Reflect.Variant[Binding, Reflect](
+      cases = Chunk.single(configSchema.reflect.asTerm("config")),
+      typeId = TypeId.of[Reflect],
+      variantBinding = new Binding.Variant(
+        discriminator = new Discriminator[Reflect] {
+          def discriminate(a: Reflect): Int = a match {
+            case _: config => 0
+          }
+        },
+        matchers = Matchers(
+          new Matcher[config] {
+            def downcastOrNull(a: Any): config = a match {
+              case x: config => x
+              case _         => null.asInstanceOf[config]
+            }
+          }
+        )
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val schema: Schema[Modifier] = new Schema(
+    reflect = new Reflect.Variant[Binding, Modifier](
+      cases = Chunk(
+        transientSchema.reflect.asTerm("transient"),
+        renameSchema.reflect.asTerm("rename"),
+        aliasSchema.reflect.asTerm("alias"),
+        configSchema.reflect.asTerm("config")
+      ),
+      typeId = TypeId.of[Modifier],
+      variantBinding = new Binding.Variant(
+        discriminator = new Discriminator[Modifier] {
+          def discriminate(a: Modifier): Int = a match {
+            case _: transient => 0
+            case _: rename    => 1
+            case _: alias     => 2
+            case _: config    => 3
+          }
+        },
+        matchers = Matchers(
+          new Matcher[transient] {
+            def downcastOrNull(a: Any): transient = a match {
+              case x: transient => x
+              case _            => null.asInstanceOf[transient]
+            }
+          },
+          new Matcher[rename] {
+            def downcastOrNull(a: Any): rename = a match {
+              case x: rename => x
+              case _         => null.asInstanceOf[rename]
+            }
+          },
+          new Matcher[alias] {
+            def downcastOrNull(a: Any): alias = a match {
+              case x: alias => x
+              case _        => null.asInstanceOf[alias]
+            }
+          },
+          new Matcher[config] {
+            def downcastOrNull(a: Any): config = a match {
+              case x: config => x
+              case _         => null.asInstanceOf[config]
+            }
+          }
+        )
+      ),
+      modifiers = Chunk.empty
+    )
+  )
 }

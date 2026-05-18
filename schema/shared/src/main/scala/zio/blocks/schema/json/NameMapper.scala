@@ -1,6 +1,23 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.json
 
 import java.lang.Character._
+import java.lang
 
 /**
  * A sealed trait that represents a generic contract for mapping string input to
@@ -44,12 +61,12 @@ object NameMapper {
       }
     } else {
       val len             = s.length
-      val sb              = new StringBuilder(len)
-      var i               = 0
+      val sb              = new lang.StringBuilder(len)
+      var idx             = 0
       var isPrecedingDash = toPascal
-      while (i < len) isPrecedingDash = {
-        val ch = s.charAt(i)
-        i += 1
+      while (idx < len) isPrecedingDash = {
+        val ch = s.charAt(idx)
+        idx += 1
         (ch == '_' || ch == '-') || {
           val fixedCh =
             if (isPrecedingDash) toUpperCase(ch)
@@ -63,12 +80,12 @@ object NameMapper {
 
   private[this] def enforceSnakeOrKebabCase(s: String, separator: Char): String = {
     val len                      = s.length
-    val sb                       = new StringBuilder(len << 1)
-    var i                        = 0
+    val sb                       = new lang.StringBuilder(len << 1)
+    var idx                      = 0
     var isPrecedingNotUpperCased = false
-    while (i < len) isPrecedingNotUpperCased = {
-      val ch = s.charAt(i)
-      i += 1
+    while (idx < len) isPrecedingNotUpperCased = {
+      val ch = s.charAt(idx)
+      idx += 1
       if (ch == '_' || ch == '-') {
         sb.append(separator)
         false
@@ -76,7 +93,7 @@ object NameMapper {
         sb.append(ch)
         true
       } else {
-        if (isPrecedingNotUpperCased || i > 1 && i < len && !isUpperCase(s.charAt(i))) sb.append(separator)
+        if (isPrecedingNotUpperCased || idx > 1 && idx < len && !isUpperCase(s.charAt(idx))) sb.append(separator)
         sb.append(toLowerCase(ch))
         false
       }

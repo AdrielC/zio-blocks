@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema.json
 
 /**
@@ -7,22 +23,22 @@ package zio.blocks.schema.json
  * configuration params already initialized by recommended default values, but
  * in some cases they should be altered for performance reasons: <ul>
  * <li>increase preferred size of an internal byte buffer for parsing from
- * [[java.io.InputStream]] or [[java.nio.DirectByteBuffer]] to reduce allocation
- * rate of grown and then reduced buffers during parsing of large (>32Kb)
- * numbers (including stringified), raw values, or ADT instances with the
- * discriminator field doesn't appear at the beginning of the JSON object</li>
- * <li>increase the preferred size of an internal char buffer to reduce the
- * allocation rate of grown and then reduced buffers when large (>4Kb) string
- * instances</li> </ul>
+ * [[java.io.InputStream]] or [[java.nio.ByteBuffer]] to reduce allocation rate
+ * of grown and then reduced buffers during parsing of large (>32Kb) numbers
+ * (including stringified), raw values, or ADT instances with the discriminator
+ * field doesn't appear at the beginning of the JSON object</li> <li>increase
+ * the preferred size of an internal char buffer to reduce the allocation rate
+ * of grown and then reduced buffers when large (>4Kb) string instances</li>
+ * </ul>
  * @param maxBufSize
  *   a max size (in bytes) of an internal byte buffer when parsing from
- *   [[java.io.InputStream]] or [[java.nio.DirectByteBuffer]]
+ *   [[java.io.InputStream]] or [[java.nio.ByteBuffer]]
  * @param maxCharBufSize
  *   a max size (in chars) of an internal char buffer for parsing of string
  *   values
  * @param preferredBufSize
  *   a preferred size (in bytes) of an internal byte buffer when parsing from
- *   [[java.io.InputStream]] or [[java.nio.DirectByteBuffer]]
+ *   [[java.io.InputStream]] or [[java.nio.ByteBuffer]]
  * @param preferredCharBufSize
  *   a preferred size (in chars) of an internal char buffer for parsing of
  *   string values

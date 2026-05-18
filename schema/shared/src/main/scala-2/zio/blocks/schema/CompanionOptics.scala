@@ -1,3 +1,19 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
 trait CompanionOptics[S] {
@@ -10,6 +26,9 @@ trait CompanionOptics[S] {
 
     @compileTimeOnly("Can only be used inside `$(_)` and `optic(_)` macros")
     def wrapped[B]: B = ???
+
+    @compileTimeOnly("Can only be used inside `$(_)` and `optic(_)` macros")
+    def searchFor[B]: B = ???
   }
 
   implicit class SequenceExtension[C[_], A](c: C[A]) {
@@ -218,6 +237,24 @@ private object CompanionOptics {
               .getOrElse(sys.error("Expected a map"))
               .asInstanceOf[_root_.zio.blocks.schema.Traversal[$parentTpe, $valueTpe]])"""
         }
+      case q"$_[..$_]($parent).searchFor[$searchTree]" =>
+        val parentTpe = parent.tpe.widen.dealias
+        val searchTpe = searchTree.tpe.dealias
+        val optic     = toOptic(parent)
+        if (optic.isEmpty) {
+          q"""_root_.zio.blocks.schema.SearchTraversal(
+                $schema.reflect.asInstanceOf[_root_.zio.blocks.schema.Reflect.Bound[$parentTpe]],
+                _root_.scala.Predef.implicitly[_root_.zio.blocks.schema.Schema[$searchTpe]].reflect
+              ).asInstanceOf[_root_.zio.blocks.schema.Traversal[$parentTpe, $searchTpe]]"""
+        } else {
+          q"""val optic = $optic
+              optic.apply(
+                _root_.zio.blocks.schema.SearchTraversal(
+                  optic.focus.asInstanceOf[_root_.zio.blocks.schema.Reflect.Bound[$parentTpe]],
+                  _root_.scala.Predef.implicitly[_root_.zio.blocks.schema.Schema[$searchTpe]].reflect
+                ).asInstanceOf[_root_.zio.blocks.schema.Traversal[$parentTpe, $searchTpe]]
+              )"""
+        }
       case q"$parent.$child" =>
         val childTpe  = tree.tpe.widen.dealias
         val fieldName = NameTransformer.decode(child.toString)
@@ -234,7 +271,7 @@ private object CompanionOptics {
         q""
       case tree =>
         fail(
-          s"Expected path elements: .<field>, .when[<T>], .at(<index>), .atIndices(<indices>), .atKey(<key>), .atKeys(<keys>), .each, .eachKey, .eachValue, or .wrapped[<T>], got '$tree'"
+          s"Expected path elements: .<field>, .when[<T>], .at(<index>), .atIndices(<indices>), .atKey(<key>), .atKeys(<keys>), .each, .eachKey, .eachValue, .wrapped[<T>], or .searchFor[<T>], got '$tree'."
         )
     }
 

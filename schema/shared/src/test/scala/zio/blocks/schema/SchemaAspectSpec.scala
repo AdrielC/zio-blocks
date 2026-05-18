@@ -1,10 +1,31 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
 
+import zio.blocks.chunk.Chunk
+import zio.blocks.docs.{Doc, Paragraph, Inline}
 import zio.blocks.schema.binding.Binding
 import zio.test.Assertion._
 import zio.test._
 
-object SchemaAspectSpec extends ZIOSpecDefault {
+object SchemaAspectSpec extends SchemaBaseSpec {
+
+  private def textDoc(s: String): Doc =
+    Doc(Chunk.single(Paragraph(Chunk.single(Inline.Text(s)))))
   case class Person(name: String, age: Int)
 
   object Person extends CompanionOptics[Person] {
@@ -24,7 +45,7 @@ object SchemaAspectSpec extends ZIOSpecDefault {
       test("doc aspect") {
         val doc           = "Person data type"
         val updatedSchema = Person.schema @@ SchemaAspect.doc(doc)
-        assert(updatedSchema.doc)(equalTo(Doc.Text(doc)))
+        assert(updatedSchema.doc)(equalTo(textDoc(doc)))
       },
       test("example aspect") {
         val p             = Person("Jaro", 34)
@@ -34,7 +55,7 @@ object SchemaAspectSpec extends ZIOSpecDefault {
       test("update doc of a field") {
         val doc           = "name of the person"
         val updatedSchema = Person.schema @@ (Person.name, SchemaAspect.doc(doc))
-        assert(updatedSchema.get(Person.name).get.doc)(equalTo(Doc.Text(doc))) &&
+        assert(updatedSchema.get(Person.name).get.doc)(equalTo(textDoc(doc))) &&
         assert(updatedSchema)(not(equalTo(Person.schema))) &&
         assert(Person.schema @@ (Person.x, SchemaAspect.doc(doc)))(equalTo(Person.schema)) // invalid lens
       }

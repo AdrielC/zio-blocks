@@ -1,4 +1,23 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 package zio.blocks.schema
+
+import zio.blocks.chunk.Chunk
+import zio.blocks.typeid.TypeId
 
 sealed trait PrimitiveValue {
   type Type
@@ -19,6 +38,8 @@ sealed trait PrimitiveValue {
 }
 
 object PrimitiveValue {
+  import zio.blocks.schema.binding._
+  import zio.blocks.schema.binding.RegisterOffset.RegisterOffset
   case object Unit extends PrimitiveValue {
     type Type = scala.Unit
 
@@ -414,4 +435,814 @@ object PrimitiveValue {
   implicit val ordering: Ordering[PrimitiveValue] = new Ordering[PrimitiveValue] {
     def compare(x: PrimitiveValue, y: PrimitiveValue): scala.Int = x.compare(y)
   }
+
+  implicit lazy val unitSchema: Schema[Unit.type] = new Schema(
+    reflect = new Reflect.Record[Binding, Unit.type](
+      fields = Chunk.empty,
+      typeId = TypeId.of[Unit.type],
+      recordBinding = new Binding.Record(
+        constructor = new ConstantConstructor[Unit.type](Unit),
+        deconstructor = new ConstantDeconstructor[Unit.type]
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val booleanSchema: Schema[Boolean] = new Schema(
+    reflect = new Reflect.Record[Binding, Boolean](
+      fields = Chunk.single(Schema[scala.Boolean].reflect.asTerm("value")),
+      typeId = TypeId.of[Boolean],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Boolean] {
+          def usedRegisters: RegisterOffset                             = RegisterOffset(booleans = 1)
+          def construct(in: Registers, offset: RegisterOffset): Boolean = new Boolean(in.getBoolean(offset))
+        },
+        deconstructor = new Deconstructor[Boolean] {
+          def usedRegisters: RegisterOffset                                                = RegisterOffset(booleans = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Boolean): scala.Unit =
+            out.setBoolean(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val byteSchema: Schema[Byte] = new Schema(
+    reflect = new Reflect.Record[Binding, Byte](
+      fields = Chunk.single(Schema[scala.Byte].reflect.asTerm("value")),
+      typeId = TypeId.of[Byte],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Byte] {
+          def usedRegisters: RegisterOffset                          = RegisterOffset(bytes = 1)
+          def construct(in: Registers, offset: RegisterOffset): Byte = new Byte(in.getByte(offset))
+        },
+        deconstructor = new Deconstructor[Byte] {
+          def usedRegisters: RegisterOffset                                             = RegisterOffset(bytes = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Byte): scala.Unit =
+            out.setByte(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val shortSchema: Schema[Short] = new Schema(
+    reflect = new Reflect.Record[Binding, Short](
+      fields = Chunk.single(Schema[scala.Short].reflect.asTerm("value")),
+      typeId = TypeId.of[Short],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Short] {
+          def usedRegisters: RegisterOffset                           = RegisterOffset(shorts = 1)
+          def construct(in: Registers, offset: RegisterOffset): Short = new Short(in.getShort(offset))
+        },
+        deconstructor = new Deconstructor[Short] {
+          def usedRegisters: RegisterOffset                                              = RegisterOffset(shorts = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Short): scala.Unit =
+            out.setShort(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val intSchema: Schema[Int] = new Schema(
+    reflect = new Reflect.Record[Binding, Int](
+      fields = Chunk.single(Schema[scala.Int].reflect.asTerm("value")),
+      typeId = TypeId.of[Int],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Int] {
+          def usedRegisters: RegisterOffset                         = RegisterOffset(ints = 1)
+          def construct(in: Registers, offset: RegisterOffset): Int = new Int(in.getInt(offset))
+        },
+        deconstructor = new Deconstructor[Int] {
+          def usedRegisters: RegisterOffset                                            = RegisterOffset(ints = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Int): scala.Unit =
+            out.setInt(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val longSchema: Schema[Long] = new Schema(
+    reflect = new Reflect.Record[Binding, Long](
+      fields = Chunk.single(Schema[scala.Long].reflect.asTerm("value")),
+      typeId = TypeId.of[Long],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Long] {
+          def usedRegisters: RegisterOffset                          = RegisterOffset(longs = 1)
+          def construct(in: Registers, offset: RegisterOffset): Long = new Long(in.getLong(offset))
+        },
+        deconstructor = new Deconstructor[Long] {
+          def usedRegisters: RegisterOffset                                             = RegisterOffset(longs = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Long): scala.Unit =
+            out.setLong(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val floatSchema: Schema[Float] = new Schema(
+    reflect = new Reflect.Record[Binding, Float](
+      fields = Chunk.single(Schema[scala.Float].reflect.asTerm("value")),
+      typeId = TypeId.of[Float],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Float] {
+          def usedRegisters: RegisterOffset                           = RegisterOffset(floats = 1)
+          def construct(in: Registers, offset: RegisterOffset): Float = new Float(in.getFloat(offset))
+        },
+        deconstructor = new Deconstructor[Float] {
+          def usedRegisters: RegisterOffset                                              = RegisterOffset(floats = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Float): scala.Unit =
+            out.setFloat(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val doubleSchema: Schema[Double] = new Schema(
+    reflect = new Reflect.Record[Binding, Double](
+      fields = Chunk.single(Schema[scala.Double].reflect.asTerm("value")),
+      typeId = TypeId.of[Double],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Double] {
+          def usedRegisters: RegisterOffset                            = RegisterOffset(doubles = 1)
+          def construct(in: Registers, offset: RegisterOffset): Double = new Double(in.getDouble(offset))
+        },
+        deconstructor = new Deconstructor[Double] {
+          def usedRegisters: RegisterOffset                                               = RegisterOffset(doubles = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Double): scala.Unit =
+            out.setDouble(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val charSchema: Schema[Char] = new Schema(
+    reflect = new Reflect.Record[Binding, Char](
+      fields = Chunk.single(Schema[scala.Char].reflect.asTerm("value")),
+      typeId = TypeId.of[Char],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Char] {
+          def usedRegisters: RegisterOffset                          = RegisterOffset(chars = 1)
+          def construct(in: Registers, offset: RegisterOffset): Char = new Char(in.getChar(offset))
+        },
+        deconstructor = new Deconstructor[Char] {
+          def usedRegisters: RegisterOffset                                             = RegisterOffset(chars = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Char): scala.Unit =
+            out.setChar(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val stringSchema: Schema[String] = new Schema(
+    reflect = new Reflect.Record[Binding, String](
+      fields = Chunk.single(Schema[java.lang.String].reflect.asTerm("value")),
+      typeId = TypeId.of[String],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[String] {
+          def usedRegisters: RegisterOffset                            = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): String =
+            new String(in.getObject(offset).asInstanceOf[java.lang.String])
+        },
+        deconstructor = new Deconstructor[String] {
+          def usedRegisters: RegisterOffset                                               = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: String): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val bigIntSchema: Schema[BigInt] = new Schema(
+    reflect = new Reflect.Record[Binding, BigInt](
+      fields = Chunk.single(Schema[scala.BigInt].reflect.asTerm("value")),
+      typeId = TypeId.of[BigInt],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[BigInt] {
+          def usedRegisters: RegisterOffset                            = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): BigInt =
+            new BigInt(in.getObject(offset).asInstanceOf[scala.BigInt])
+        },
+        deconstructor = new Deconstructor[BigInt] {
+          def usedRegisters: RegisterOffset                                               = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: BigInt): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val bigDecimalSchema: Schema[BigDecimal] = new Schema(
+    reflect = new Reflect.Record[Binding, BigDecimal](
+      fields = Chunk.single(Schema[scala.BigDecimal].reflect.asTerm("value")),
+      typeId = TypeId.of[BigDecimal],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[BigDecimal] {
+          def usedRegisters: RegisterOffset                                = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): BigDecimal =
+            new BigDecimal(in.getObject(offset).asInstanceOf[scala.BigDecimal])
+        },
+        deconstructor = new Deconstructor[BigDecimal] {
+          def usedRegisters: RegisterOffset                                                   = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: BigDecimal): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val dayOfWeekSchema: Schema[DayOfWeek] = new Schema(
+    reflect = new Reflect.Record[Binding, DayOfWeek](
+      fields = Chunk.single(Schema[java.time.DayOfWeek].reflect.asTerm("value")),
+      typeId = TypeId.of[DayOfWeek],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[DayOfWeek] {
+          def usedRegisters: RegisterOffset                               = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): DayOfWeek =
+            new DayOfWeek(in.getObject(offset).asInstanceOf[java.time.DayOfWeek])
+        },
+        deconstructor = new Deconstructor[DayOfWeek] {
+          def usedRegisters: RegisterOffset                                                  = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: DayOfWeek): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val durationSchema: Schema[Duration] = new Schema(
+    reflect = new Reflect.Record[Binding, Duration](
+      fields = Chunk.single(Schema[java.time.Duration].reflect.asTerm("value")),
+      typeId = TypeId.of[Duration],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Duration] {
+          def usedRegisters: RegisterOffset                              = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): Duration =
+            new Duration(in.getObject(offset).asInstanceOf[java.time.Duration])
+        },
+        deconstructor = new Deconstructor[Duration] {
+          def usedRegisters: RegisterOffset                                                 = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Duration): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val instantSchema: Schema[Instant] = new Schema(
+    reflect = new Reflect.Record[Binding, Instant](
+      fields = Chunk.single(Schema[java.time.Instant].reflect.asTerm("value")),
+      typeId = TypeId.of[Instant],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Instant] {
+          def usedRegisters: RegisterOffset                             = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): Instant =
+            new Instant(in.getObject(offset).asInstanceOf[java.time.Instant])
+        },
+        deconstructor = new Deconstructor[Instant] {
+          def usedRegisters: RegisterOffset                                                = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Instant): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val localDateSchema: Schema[LocalDate] = new Schema(
+    reflect = new Reflect.Record[Binding, LocalDate](
+      fields = Chunk.single(Schema[java.time.LocalDate].reflect.asTerm("value")),
+      typeId = TypeId.of[LocalDate],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[LocalDate] {
+          def usedRegisters: RegisterOffset                               = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): LocalDate =
+            new LocalDate(in.getObject(offset).asInstanceOf[java.time.LocalDate])
+        },
+        deconstructor = new Deconstructor[LocalDate] {
+          def usedRegisters: RegisterOffset                                                  = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: LocalDate): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val localDateTimeSchema: Schema[LocalDateTime] = new Schema(
+    reflect = new Reflect.Record[Binding, LocalDateTime](
+      fields = Chunk.single(Schema[java.time.LocalDateTime].reflect.asTerm("value")),
+      typeId = TypeId.of[LocalDateTime],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[LocalDateTime] {
+          def usedRegisters: RegisterOffset                                   = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): LocalDateTime =
+            new LocalDateTime(in.getObject(offset).asInstanceOf[java.time.LocalDateTime])
+        },
+        deconstructor = new Deconstructor[LocalDateTime] {
+          def usedRegisters: RegisterOffset                                                      = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: LocalDateTime): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val localTimeSchema: Schema[LocalTime] = new Schema(
+    reflect = new Reflect.Record[Binding, LocalTime](
+      fields = Chunk.single(Schema[java.time.LocalTime].reflect.asTerm("value")),
+      typeId = TypeId.of[LocalTime],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[LocalTime] {
+          def usedRegisters: RegisterOffset                               = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): LocalTime =
+            new LocalTime(in.getObject(offset).asInstanceOf[java.time.LocalTime])
+        },
+        deconstructor = new Deconstructor[LocalTime] {
+          def usedRegisters: RegisterOffset                                                  = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: LocalTime): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val monthSchema: Schema[Month] = new Schema(
+    reflect = new Reflect.Record[Binding, Month](
+      fields = Chunk.single(Schema[java.time.Month].reflect.asTerm("value")),
+      typeId = TypeId.of[Month],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Month] {
+          def usedRegisters: RegisterOffset                           = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): Month =
+            new Month(in.getObject(offset).asInstanceOf[java.time.Month])
+        },
+        deconstructor = new Deconstructor[Month] {
+          def usedRegisters: RegisterOffset                                              = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Month): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val monthDaySchema: Schema[MonthDay] = new Schema(
+    reflect = new Reflect.Record[Binding, MonthDay](
+      fields = Chunk.single(Schema[java.time.MonthDay].reflect.asTerm("value")),
+      typeId = TypeId.of[MonthDay],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[MonthDay] {
+          def usedRegisters: RegisterOffset                              = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): MonthDay =
+            new MonthDay(in.getObject(offset).asInstanceOf[java.time.MonthDay])
+        },
+        deconstructor = new Deconstructor[MonthDay] {
+          def usedRegisters: RegisterOffset                                                 = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: MonthDay): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val offsetDateTimeSchema: Schema[OffsetDateTime] = new Schema(
+    reflect = new Reflect.Record[Binding, OffsetDateTime](
+      fields = Chunk.single(Schema[java.time.OffsetDateTime].reflect.asTerm("value")),
+      typeId = TypeId.of[OffsetDateTime],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[OffsetDateTime] {
+          def usedRegisters: RegisterOffset                                    = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): OffsetDateTime =
+            new OffsetDateTime(in.getObject(offset).asInstanceOf[java.time.OffsetDateTime])
+        },
+        deconstructor = new Deconstructor[OffsetDateTime] {
+          def usedRegisters: RegisterOffset                                                       = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: OffsetDateTime): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val offsetTimeSchema: Schema[OffsetTime] = new Schema(
+    reflect = new Reflect.Record[Binding, OffsetTime](
+      fields = Chunk.single(Schema[java.time.OffsetTime].reflect.asTerm("value")),
+      typeId = TypeId.of[OffsetTime],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[OffsetTime] {
+          def usedRegisters: RegisterOffset                                = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): OffsetTime =
+            new OffsetTime(in.getObject(offset).asInstanceOf[java.time.OffsetTime])
+        },
+        deconstructor = new Deconstructor[OffsetTime] {
+          def usedRegisters: RegisterOffset                                                   = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: OffsetTime): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val periodSchema: Schema[Period] = new Schema(
+    reflect = new Reflect.Record[Binding, Period](
+      fields = Chunk.single(Schema[java.time.Period].reflect.asTerm("value")),
+      typeId = TypeId.of[Period],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Period] {
+          def usedRegisters: RegisterOffset                            = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): Period =
+            new Period(in.getObject(offset).asInstanceOf[java.time.Period])
+        },
+        deconstructor = new Deconstructor[Period] {
+          def usedRegisters: RegisterOffset                                               = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Period): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val yearSchema: Schema[Year] = new Schema(
+    reflect = new Reflect.Record[Binding, Year](
+      fields = Chunk.single(Schema[java.time.Year].reflect.asTerm("value")),
+      typeId = TypeId.of[Year],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Year] {
+          def usedRegisters: RegisterOffset                          = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): Year =
+            new Year(in.getObject(offset).asInstanceOf[java.time.Year])
+        },
+        deconstructor = new Deconstructor[Year] {
+          def usedRegisters: RegisterOffset                                             = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Year): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val yearMonthSchema: Schema[YearMonth] = new Schema(
+    reflect = new Reflect.Record[Binding, YearMonth](
+      fields = Chunk.single(Schema[java.time.YearMonth].reflect.asTerm("value")),
+      typeId = TypeId.of[YearMonth],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[YearMonth] {
+          def usedRegisters: RegisterOffset                               = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): YearMonth =
+            new YearMonth(in.getObject(offset).asInstanceOf[java.time.YearMonth])
+        },
+        deconstructor = new Deconstructor[YearMonth] {
+          def usedRegisters: RegisterOffset                                                  = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: YearMonth): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val zoneIdSchema: Schema[ZoneId] = new Schema(
+    reflect = new Reflect.Record[Binding, ZoneId](
+      fields = Chunk.single(Schema[java.time.ZoneId].reflect.asTerm("value")),
+      typeId = TypeId.of[ZoneId],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[ZoneId] {
+          def usedRegisters: RegisterOffset                            = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): ZoneId =
+            new ZoneId(in.getObject(offset).asInstanceOf[java.time.ZoneId])
+        },
+        deconstructor = new Deconstructor[ZoneId] {
+          def usedRegisters: RegisterOffset                                               = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: ZoneId): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val zoneOffsetSchema: Schema[ZoneOffset] = new Schema(
+    reflect = new Reflect.Record[Binding, ZoneOffset](
+      fields = Chunk.single(Schema[java.time.ZoneOffset].reflect.asTerm("value")),
+      typeId = TypeId.of[ZoneOffset],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[ZoneOffset] {
+          def usedRegisters: RegisterOffset                                = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): ZoneOffset =
+            new ZoneOffset(in.getObject(offset).asInstanceOf[java.time.ZoneOffset])
+        },
+        deconstructor = new Deconstructor[ZoneOffset] {
+          def usedRegisters: RegisterOffset                                                   = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: ZoneOffset): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val zonedDateTimeSchema: Schema[ZonedDateTime] = new Schema(
+    reflect = new Reflect.Record[Binding, ZonedDateTime](
+      fields = Chunk.single(Schema[java.time.ZonedDateTime].reflect.asTerm("value")),
+      typeId = TypeId.of[ZonedDateTime],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[ZonedDateTime] {
+          def usedRegisters: RegisterOffset                                   = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): ZonedDateTime =
+            new ZonedDateTime(in.getObject(offset).asInstanceOf[java.time.ZonedDateTime])
+        },
+        deconstructor = new Deconstructor[ZonedDateTime] {
+          def usedRegisters: RegisterOffset                                                      = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: ZonedDateTime): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val currencySchema: Schema[Currency] = new Schema(
+    reflect = new Reflect.Record[Binding, Currency](
+      fields = Chunk.single(Schema[java.util.Currency].reflect.asTerm("value")),
+      typeId = TypeId.of[Currency],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[Currency] {
+          def usedRegisters: RegisterOffset                              = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): Currency =
+            new Currency(in.getObject(offset).asInstanceOf[java.util.Currency])
+        },
+        deconstructor = new Deconstructor[Currency] {
+          def usedRegisters: RegisterOffset                                                 = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: Currency): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val uuidSchema: Schema[UUID] = new Schema(
+    reflect = new Reflect.Record[Binding, UUID](
+      fields = Chunk.single(Schema[java.util.UUID].reflect.asTerm("value")),
+      typeId = TypeId.of[UUID],
+      recordBinding = new Binding.Record(
+        constructor = new Constructor[UUID] {
+          def usedRegisters: RegisterOffset                          = RegisterOffset(objects = 1)
+          def construct(in: Registers, offset: RegisterOffset): UUID =
+            new UUID(in.getObject(offset).asInstanceOf[java.util.UUID])
+        },
+        deconstructor = new Deconstructor[UUID] {
+          def usedRegisters: RegisterOffset                                             = RegisterOffset(objects = 1)
+          def deconstruct(out: Registers, offset: RegisterOffset, in: UUID): scala.Unit =
+            out.setObject(offset, in.value)
+        }
+      ),
+      modifiers = Chunk.empty
+    )
+  )
+
+  implicit lazy val schema: Schema[PrimitiveValue] = new Schema(
+    reflect = new Reflect.Variant[Binding, PrimitiveValue](
+      cases = Chunk(
+        unitSchema.reflect.asTerm("Unit"),
+        booleanSchema.reflect.asTerm("Boolean"),
+        byteSchema.reflect.asTerm("Byte"),
+        shortSchema.reflect.asTerm("Short"),
+        intSchema.reflect.asTerm("Int"),
+        longSchema.reflect.asTerm("Long"),
+        floatSchema.reflect.asTerm("Float"),
+        doubleSchema.reflect.asTerm("Double"),
+        charSchema.reflect.asTerm("Char"),
+        stringSchema.reflect.asTerm("String"),
+        bigIntSchema.reflect.asTerm("BigInt"),
+        bigDecimalSchema.reflect.asTerm("BigDecimal"),
+        dayOfWeekSchema.reflect.asTerm("DayOfWeek"),
+        durationSchema.reflect.asTerm("Duration"),
+        instantSchema.reflect.asTerm("Instant"),
+        localDateSchema.reflect.asTerm("LocalDate"),
+        localDateTimeSchema.reflect.asTerm("LocalDateTime"),
+        localTimeSchema.reflect.asTerm("LocalTime"),
+        monthSchema.reflect.asTerm("Month"),
+        monthDaySchema.reflect.asTerm("MonthDay"),
+        offsetDateTimeSchema.reflect.asTerm("OffsetDateTime"),
+        offsetTimeSchema.reflect.asTerm("OffsetTime"),
+        periodSchema.reflect.asTerm("Period"),
+        yearSchema.reflect.asTerm("Year"),
+        yearMonthSchema.reflect.asTerm("YearMonth"),
+        zoneIdSchema.reflect.asTerm("ZoneId"),
+        zoneOffsetSchema.reflect.asTerm("ZoneOffset"),
+        zonedDateTimeSchema.reflect.asTerm("ZonedDateTime"),
+        currencySchema.reflect.asTerm("Currency"),
+        uuidSchema.reflect.asTerm("UUID")
+      ),
+      typeId = TypeId.of[PrimitiveValue],
+      variantBinding = new Binding.Variant(
+        discriminator = new Discriminator[PrimitiveValue] {
+          def discriminate(a: PrimitiveValue): scala.Int = a.typeIndex
+        },
+        matchers = Matchers(
+          new Matcher[Unit.type] {
+            def downcastOrNull(a: Any): Unit.type = a match {
+              case x: Unit.type => x
+              case _            => null.asInstanceOf[Unit.type]
+            }
+          },
+          new Matcher[Boolean] {
+            def downcastOrNull(a: Any): Boolean = a match {
+              case x: Boolean => x
+              case _          => null.asInstanceOf[Boolean]
+            }
+          },
+          new Matcher[Byte] {
+            def downcastOrNull(a: Any): Byte = a match {
+              case x: Byte => x
+              case _       => null.asInstanceOf[Byte]
+            }
+          },
+          new Matcher[Short] {
+            def downcastOrNull(a: Any): Short = a match {
+              case x: Short => x
+              case _        => null.asInstanceOf[Short]
+            }
+          },
+          new Matcher[Int] {
+            def downcastOrNull(a: Any): Int = a match {
+              case x: Int => x
+              case _      => null.asInstanceOf[Int]
+            }
+          },
+          new Matcher[Long] {
+            def downcastOrNull(a: Any): Long = a match {
+              case x: Long => x
+              case _       => null.asInstanceOf[Long]
+            }
+          },
+          new Matcher[Float] {
+            def downcastOrNull(a: Any): Float = a match {
+              case x: Float => x
+              case _        => null.asInstanceOf[Float]
+            }
+          },
+          new Matcher[Double] {
+            def downcastOrNull(a: Any): Double = a match {
+              case x: Double => x
+              case _         => null.asInstanceOf[Double]
+            }
+          },
+          new Matcher[Char] {
+            def downcastOrNull(a: Any): Char = a match {
+              case x: Char => x
+              case _       => null.asInstanceOf[Char]
+            }
+          },
+          new Matcher[String] {
+            def downcastOrNull(a: Any): String = a match {
+              case x: String => x
+              case _         => null.asInstanceOf[String]
+            }
+          },
+          new Matcher[BigInt] {
+            def downcastOrNull(a: Any): BigInt = a match {
+              case x: BigInt => x
+              case _         => null.asInstanceOf[BigInt]
+            }
+          },
+          new Matcher[BigDecimal] {
+            def downcastOrNull(a: Any): BigDecimal = a match {
+              case x: BigDecimal => x
+              case _             => null.asInstanceOf[BigDecimal]
+            }
+          },
+          new Matcher[DayOfWeek] {
+            def downcastOrNull(a: Any): DayOfWeek = a match {
+              case x: DayOfWeek => x
+              case _            => null.asInstanceOf[DayOfWeek]
+            }
+          },
+          new Matcher[Duration] {
+            def downcastOrNull(a: Any): Duration = a match {
+              case x: Duration => x
+              case _           => null.asInstanceOf[Duration]
+            }
+          },
+          new Matcher[Instant] {
+            def downcastOrNull(a: Any): Instant = a match {
+              case x: Instant => x
+              case _          => null.asInstanceOf[Instant]
+            }
+          },
+          new Matcher[LocalDate] {
+            def downcastOrNull(a: Any): LocalDate = a match {
+              case x: LocalDate => x
+              case _            => null.asInstanceOf[LocalDate]
+            }
+          },
+          new Matcher[LocalDateTime] {
+            def downcastOrNull(a: Any): LocalDateTime = a match {
+              case x: LocalDateTime => x
+              case _                => null.asInstanceOf[LocalDateTime]
+            }
+          },
+          new Matcher[LocalTime] {
+            def downcastOrNull(a: Any): LocalTime = a match {
+              case x: LocalTime => x
+              case _            => null.asInstanceOf[LocalTime]
+            }
+          },
+          new Matcher[Month] {
+            def downcastOrNull(a: Any): Month = a match {
+              case x: Month => x
+              case _        => null.asInstanceOf[Month]
+            }
+          },
+          new Matcher[MonthDay] {
+            def downcastOrNull(a: Any): MonthDay = a match {
+              case x: MonthDay => x
+              case _           => null.asInstanceOf[MonthDay]
+            }
+          },
+          new Matcher[OffsetDateTime] {
+            def downcastOrNull(a: Any): OffsetDateTime = a match {
+              case x: OffsetDateTime => x
+              case _                 => null.asInstanceOf[OffsetDateTime]
+            }
+          },
+          new Matcher[OffsetTime] {
+            def downcastOrNull(a: Any): OffsetTime = a match {
+              case x: OffsetTime => x
+              case _             => null.asInstanceOf[OffsetTime]
+            }
+          },
+          new Matcher[Period] {
+            def downcastOrNull(a: Any): Period = a match {
+              case x: Period => x
+              case _         => null.asInstanceOf[Period]
+            }
+          },
+          new Matcher[Year] {
+            def downcastOrNull(a: Any): Year = a match {
+              case x: Year => x
+              case _       => null.asInstanceOf[Year]
+            }
+          },
+          new Matcher[YearMonth] {
+            def downcastOrNull(a: Any): YearMonth = a match {
+              case x: YearMonth => x
+              case _            => null.asInstanceOf[YearMonth]
+            }
+          },
+          new Matcher[ZoneId] {
+            def downcastOrNull(a: Any): ZoneId = a match {
+              case x: ZoneId => x
+              case _         => null.asInstanceOf[ZoneId]
+            }
+          },
+          new Matcher[ZoneOffset] {
+            def downcastOrNull(a: Any): ZoneOffset = a match {
+              case x: ZoneOffset => x
+              case _             => null.asInstanceOf[ZoneOffset]
+            }
+          },
+          new Matcher[ZonedDateTime] {
+            def downcastOrNull(a: Any): ZonedDateTime = a match {
+              case x: ZonedDateTime => x
+              case _                => null.asInstanceOf[ZonedDateTime]
+            }
+          },
+          new Matcher[Currency] {
+            def downcastOrNull(a: Any): Currency = a match {
+              case x: Currency => x
+              case _           => null.asInstanceOf[Currency]
+            }
+          },
+          new Matcher[UUID] {
+            def downcastOrNull(a: Any): UUID = a match {
+              case x: UUID => x
+              case _       => null.asInstanceOf[UUID]
+            }
+          }
+        )
+      ),
+      modifiers = Chunk.empty
+    )
+  )
 }

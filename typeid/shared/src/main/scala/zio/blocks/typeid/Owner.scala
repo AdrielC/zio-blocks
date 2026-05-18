@@ -1,0 +1,134 @@
+/*
+ * Copyright 2024-2026 John A. De Goes and the ZIO Contributors
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+package zio.blocks.typeid
+
+/**
+ * Represents where a type is defined in the Scala/Java ecosystem.
+ *
+ * An Owner encapsulates the hierarchical ownership chain of a type, which can
+ * include packages, terms (objects/values), and types.
+ *
+ * For example, for a type `MyClass` defined as:
+ * {{{
+ * package com.example
+ * object Outer {
+ *   class MyClass
+ * }
+ * }}}
+ *
+ * The owner would be:
+ * {{{
+ * Owner(List(
+ *   Owner.Package("com"),
+ *   Owner.Package("example"),
+ *   Owner.Term("Outer")
+ * ))
+ * }}}
+ */
+final case class Owner(segments: List[Owner.Segment]) {
+
+  /**
+   * Returns the owner path as a dot-separated string.
+   */
+  def asString: String = segments
+    .foldLeft(new java.lang.StringBuilder) { (sb, s) =>
+      if (sb.length > 0) sb.append('.')
+      sb.append(s.name)
+    }
+    .toString
+
+  /**
+   * Appends a package segment to this owner.
+   */
+  def /(pkg: String): Owner = new Owner(segments :+ new Owner.Package(pkg))
+
+  /**
+   * Appends a term segment to this owner.
+   */
+  def term(name: String): Owner = new Owner(segments :+ new Owner.Term(name))
+
+  /**
+   * Appends a type segment to this owner.
+   */
+  def tpe(name: String): Owner = new Owner(segments :+ new Owner.Type(name))
+
+  /**
+   * Returns true if this owner represents the root (empty) owner.
+   */
+  def isRoot: Boolean = segments.isEmpty
+
+  /**
+   * Returns the parent owner, or Root if this is already the root.
+   */
+  def parent: Owner =
+    if (segments.isEmpty) Owner.Root
+    else new Owner(segments.init)
+
+  /**
+   * Returns the last segment's name, or empty string if root.
+   */
+  def lastName: String = segments.lastOption match {
+    case Some(s) => s.name
+    case _       => ""
+  }
+}
+
+object Owner {
+
+  /**
+   * A segment in the ownership chain.
+   */
+  sealed trait Segment {
+    def name: String
+  }
+
+  /**
+   * A package segment (e.g., `com`, `example`).
+   */
+  final case class Package(name: String) extends Segment
+
+  /**
+   * A term segment (e.g., an object or value).
+   */
+  final case class Term(name: String) extends Segment
+
+  /**
+   * A type segment (e.g., an enclosing class or trait).
+   */
+  final case class Type(name: String) extends Segment
+
+  /**
+   * The root owner (no segments).
+   */
+  val Root: Owner = new Owner(Nil)
+
+  /**
+   * Creates an Owner from a dot-separated package path. All segments are
+   * treated as packages.
+   */
+  def fromPackagePath(path: String): Owner =
+    if (path.isEmpty) Root
+    else new Owner(path.split('.').map(Package.apply).toList)
+
+  // Common namespaces
+  private[typeid] val scala: Owner                    = fromPackagePath("scala")
+  private[typeid] val scalaUtil: Owner                = fromPackagePath("scala.util")
+  private[typeid] val scalaCollectionImmutable: Owner = fromPackagePath("scala.collection.immutable")
+  private[typeid] val javaLang: Owner                 = fromPackagePath("java.lang")
+  private[typeid] val javaTime: Owner                 = fromPackagePath("java.time")
+  private[typeid] val javaUtil: Owner                 = fromPackagePath("java.util")
+}
