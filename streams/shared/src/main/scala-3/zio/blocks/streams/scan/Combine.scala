@@ -16,26 +16,27 @@
 
 package zio.blocks.streams.scan
 
+import scala.compiletime.{erasedValue, summonInline}
 import zio.blocks.combinators.Tuples.Tuples
 
 /**
  * Merges two `Scan` state types into a normalised carrier.
  *
- * `Combine` is a thin priority ladder over [[zio.blocks.combinators.Tuples]].
- * Its sole purpose is to make `Scan.lift(...) &&& Scan.lift(...)` (both
- * stateless) compile without an ambiguous-implicit error: upstream `Tuples`
- * provides both `leftUnit` and `rightUnit` at the same priority, which collide
- * when both sides are `Unit`.
+ * On Scala 3 the result type is computed by the [[Combine.Merge]] match-type,
+ * so the compiler structurally infers the composed state without doing
+ * priority-based implicit search at every call site — exactly the same
+ * pattern upstream uses in [[zio.blocks.combinators.Tuples.Combined]] and
+ * [[zio.blocks.combinators.Eithers.CanonicalizeEither]].
  *
- * Priority order:
- *   1. `unitUnit` (highest): `Combine[Unit, Unit] { type Out = Unit }`.
- *   2. `leftUnit` / `rightUnit`: identity for stateless+stateful pairs.
- *   3. `fromTuples` (lowest): delegate to upstream `Tuples`, picking up its
- *      Scala 3 auto-flattening of nested tuples.
+ * Reduction rules (read left-to-right):
  *
- * Living in the `Scan` companion's package puts every instance in implicit
- * scope at the call site of `>>>` / `&&&` automatically — users never need to
- * import anything.
+ *   - `Merge[Unit, Unit]`            => `Unit`        (avoids `Tuples.leftUnit`/`rightUnit` ambiguity)
+ *   - `Merge[Unit, B]`               => `B`           (left identity)
+ *   - `Merge[A, Unit]`               => `A`           (right identity)
+ *   - `Merge[A, B]`                  => `Tuples.Combined[A, B]` (flat tuple with Scala 3 auto-flattening)
+ *
+ * Runtime instances live in the [[Combine]] companion so implicit scope picks
+ * them up without imports.
  */
 trait Combine[A, B] { self =>
   type Out
@@ -47,6 +48,27 @@ object Combine extends CombineLowPriority {
   type Aux[A, B, O] = Combine[A, B] { type Out = O }
 
   /**
+   * Match-type encoding of the merged state. Used as the inferred `Out` of
+   * the inlined [[Combine.merge]] given so the compiler sees the precise
+   * composed type at every `>>>` / `&&&` / `***` / `+++` / `|||` call site.
+   *
+   * Matches the upstream `Tuples.Combined` / `Eithers.CanonicalizeEither`
+   * pattern (also Scala 3-only).
+   */
+  type Merge[A, B] = A match {
+    case Unit =>
+      B match {
+        case Unit => Unit
+        case _    => B
+      }
+    case _ =>
+      B match {
+        case Unit => A
+        case _    => zio.blocks.combinators.Tuples.Combined[A, B]
+      }
+  }
+
+  /**
    * Top priority: when both sides are `Unit`, the merge is `Unit` and avoids
    * the ambiguity between `Tuples.leftUnit` and `Tuples.rightUnit`.
    */
@@ -55,6 +77,36 @@ object Combine extends CombineLowPriority {
     def combine(a: Unit, b: Unit): Unit   = ()
     def separate(out: Unit): (Unit, Unit) = ((), ())
   }
+
+  /**
+   * Compile-time-friendly inline summon that resolves to one of `unitUnit`,
+   * `leftUnit`, `rightUnit`, or `fromTuples` based on `Merge[A, B]`. Avoids
+   * priority-based search and surfaces the precise `Out` type via the
+   * match-type — the same pattern as
+   * [[zio.blocks.combinators.Eithers.Eithers.eithers]].
+   *
+   * This is opt-in — call sites of [[Scan.>>>]] / [[Scan.&&&]] still use the
+   * regular `given`-based resolution. Power users who want guaranteed
+   * compile-time inference can write
+   * `summon[Combine.Aux[A, B, Combine.Merge[A, B]]]`.
+   */
+  inline def merge[A, B]: Combine.Aux[A, B, Merge[A, B]] =
+    inline erasedValue[A] match {
+      case _: Unit =>
+        inline erasedValue[B] match {
+          case _: Unit => unitUnit.asInstanceOf[Combine.Aux[A, B, Merge[A, B]]]
+          case _       => summonInline[Combine.Aux[Unit, B, B]].asInstanceOf[Combine.Aux[A, B, Merge[A, B]]]
+        }
+      case _ =>
+        inline erasedValue[B] match {
+          case _: Unit => summonInline[Combine.Aux[A, Unit, A]].asInstanceOf[Combine.Aux[A, B, Merge[A, B]]]
+          case _       =>
+            // Delegate to the priority-ladder `fromTuples` given; the
+            // match-type already constrains the inferred `Out` to
+            // `Tuples.Combined[A, B]`, which matches Tuples' `combine`.
+            summonInline[Combine[A, B]].asInstanceOf[Combine.Aux[A, B, Merge[A, B]]]
+        }
+    }
 }
 
 private[scan] sealed abstract class CombineLowPriority extends CombineLowestPriority {

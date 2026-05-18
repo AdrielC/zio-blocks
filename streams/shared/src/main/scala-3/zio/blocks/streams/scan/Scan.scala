@@ -95,8 +95,8 @@ abstract class Scan[-In, +Out] { self =>
 
   /**
    * Sequential composition: feed the output of `this` into `that`. The state
-   * type merges via [[zio.blocks.combinators.Tuples]] (`Unit` is the identity,
-   * so stateless+stateful stays single-state).
+   * type merges via [[Combine]] (`Unit` is the identity, so stateless+stateful
+   * stays single-state).
    */
   final def >>>[Out2, S2](that: Scan.Aux[Out, Out2, S2])(using
     t: Combine[State, S2]
@@ -295,9 +295,18 @@ abstract class Scan[-In, +Out] { self =>
   //  State projection
   // ---------------------------------------------------------------------------
 
-  /** Project the state through `f` (doesn't change inputs/outputs). */
-  final def mapState[S2](f: State => S2): Scan.Aux[In, Out, S2] =
-    new Scan.MappedState[In, Out, State, S2](self, f)
+  /**
+   * Project the state through `f` (doesn't change inputs/outputs).
+   *
+   * On Scala 3 this is `inline` and short-circuits to `self` when `S =:= S2`
+   * (so e.g. `s.mapState(identity)` and `s.mapState[State](Predef.identity)`
+   * are zero-cost). Mirrors `Sink.mapError` / `Stream.mapError`.
+   */
+  inline final def mapState[S2](inline f: State => S2): Scan.Aux[In, Out, S2] =
+    scala.compiletime.summonFrom {
+      case _: (State =:= S2) => self.asInstanceOf[Scan.Aux[In, Out, S2]]
+      case _                 => new Scan.MappedState[In, Out, State, S2](self, f)
+    }
 
   /**
    * Re-ascribe the state type when you statically know the equivalence. Useful
