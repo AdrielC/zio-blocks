@@ -24,16 +24,18 @@ import zio.blocks.combinators.Tuples.Tuples
  *
  * On Scala 3 the result type is computed by the [[Combine.Merge]] match-type,
  * so the compiler structurally infers the composed state without doing
- * priority-based implicit search at every call site — exactly the same
- * pattern upstream uses in [[zio.blocks.combinators.Tuples.Combined]] and
+ * priority-based implicit search at every call site — exactly the same pattern
+ * upstream uses in [[zio.blocks.combinators.Tuples.Combined]] and
  * [[zio.blocks.combinators.Eithers.CanonicalizeEither]].
  *
  * Reduction rules (read left-to-right):
  *
- *   - `Merge[Unit, Unit]`            => `Unit`        (avoids `Tuples.leftUnit`/`rightUnit` ambiguity)
- *   - `Merge[Unit, B]`               => `B`           (left identity)
- *   - `Merge[A, Unit]`               => `A`           (right identity)
- *   - `Merge[A, B]`                  => `Tuples.Combined[A, B]` (flat tuple with Scala 3 auto-flattening)
+ *   - `Merge[Unit, Unit]` => `Unit` (avoids `Tuples.leftUnit`/`rightUnit`
+ *     ambiguity)
+ *   - `Merge[Unit, B]` => `B` (left identity)
+ *   - `Merge[A, Unit]` => `A` (right identity)
+ *   - `Merge[A, B]` => `Tuples.Combined[A, B]` (flat tuple with Scala 3
+ *     auto-flattening)
  *
  * Runtime instances live in the [[Combine]] companion so implicit scope picks
  * them up without imports.
@@ -48,9 +50,9 @@ object Combine extends CombineLowPriority {
   type Aux[A, B, O] = Combine[A, B] { type Out = O }
 
   /**
-   * Match-type encoding of the merged state. Used as the inferred `Out` of
-   * the inlined [[Combine.merge]] given so the compiler sees the precise
-   * composed type at every `>>>` / `&&&` / `***` / `+++` / `|||` call site.
+   * Match-type encoding of the merged state. Used as the inferred `Out` of the
+   * inlined [[Combine.merge]] given so the compiler sees the precise composed
+   * type at every `>>>` / `&&&` / `***` / `+++` / `|||` call site.
    *
    * Matches the upstream `Tuples.Combined` / `Eithers.CanonicalizeEither`
    * pattern (also Scala 3-only).

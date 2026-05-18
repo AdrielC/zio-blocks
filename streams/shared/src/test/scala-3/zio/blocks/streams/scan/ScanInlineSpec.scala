@@ -20,12 +20,12 @@ import zio.blocks.streams.StreamsBaseSpec
 import zio.test._
 
 /**
- * Scala 3-only compile-time tests for the inline / match-type ergonomics
- * on [[Scan]] and [[Combine]].
+ * Scala 3-only compile-time tests for the inline / match-type ergonomics on
+ * [[Scan]] and [[Combine]].
  *
  *   - `Combine.Merge[A, B]` reduces structurally with no priority search.
- *   - `Combine.merge[A, B]` resolves to a precise `Aux[A, B, Merge[A, B]]`
- *     for power users that want guaranteed compile-time inference.
+ *   - `Combine.merge[A, B]` resolves to a precise `Aux[A, B, Merge[A, B]]` for
+ *     power users that want guaranteed compile-time inference.
  *   - `scan.mapState(identity)` short-circuits to `scan` (object identity),
  *     mirroring the `Sink.mapError` / `Stream.mapError` precedent.
  *

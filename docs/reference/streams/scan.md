@@ -49,26 +49,47 @@ val state: Either[Nothing, (Long, Int)] =
   Stream(1, 2, 3, 4).run(scan.toSink)   // Right((4L, 10))
 ```
 
-## Composition
+## Composition (Category / Arrow / ArrowChoice / Strong)
 
-| Operator       | Meaning                                                                                                | State merge       |
-|----------------|--------------------------------------------------------------------------------------------------------|-------------------|
-| `a >>> b`      | Sequential: feed `a`'s output into `b`                                                                 | via `Combine`     |
-| `a &&& b`      | Fanout: send every input to both, pair the outputs                                                     | via `Combine`     |
-| `s.map(f)`     | Transform every output                                                                                 | unchanged         |
-| `s.contramap(f)` | Pre-process every input                                                                              | unchanged         |
-| `s.dimap(g)(f)` | `contramap(g) >>> map(f)`                                                                             | unchanged         |
-| `s.mapState(f)` | Project the state                                                                                     | `S2`              |
+Full parity with `fs2.Scan` plus the canonical Arrow combinators.
 
-`Combine` is a thin priority ladder that disambiguates `Tuples[Unit, Unit]`
-(both `leftUnit` and `rightUnit` from upstream `Tuples` would otherwise
-match) and otherwise delegates to `combinators.Tuples` so you keep its
-Scala 3 auto-flattening:
+| Operator           | Meaning                                                                              | State merge   |
+|--------------------|--------------------------------------------------------------------------------------|---------------|
+| `a >>> b`          | Sequential: feed `a`'s output into `b`                                               | via `Combine` |
+| `a &&& b`          | Fanout: send every input to both, pair the outputs                                   | via `Combine` |
+| `a *** b` / `split`| Pair-parallel: `(InL, InR) => (OutL, OutR)`                                          | via `Combine` |
+| `a +++ b` / `choice`| Either-input, joint output type                                                     | via `Combine` |
+| `a ||| b` / `choose`| Either-input, `Either[OutL, OutR]` output                                           | via `Combine` |
+| `s.first[A]`       | Lift over the left half of a pair-input: `(In, A) => (Out, A)`                       | unchanged     |
+| `s.second[A]`      | Lift over the right half of a pair-input                                             | unchanged     |
+| `s.left[A]`        | Route `Left` through `s`; `Right` values pass through                                | unchanged     |
+| `s.right[A]`       | Route `Right` through `s`; `Left` values pass through                                | unchanged     |
+| `s.lens(get, set)` | Generic lens through any input/output transform                                      | unchanged     |
+| `s.semilens(extract, inject)` | Like `lens` but `extract` may short-circuit via `Left(o2)`                | unchanged     |
+| `s.semipass(extract)` | Like `semilens`; the inner scan's output passes through unchanged                 | unchanged     |
+| `s.map(f)`         | Transform every output                                                               | unchanged     |
+| `s.contramap(f)`   | Pre-process every input                                                              | unchanged     |
+| `s.dimap(g)(f)`    | `contramap(g) >>> map(f)`                                                            | unchanged     |
+| `s.mapState(f)`    | Project the state (Scala 3: `inline`, short-circuits when `State =:= S2`)            | `S2`          |
+| `s.step(i)`        | Single-input parity with `fs2.Scan#step`: `(Scan, Chunk[Out])`                       | unchanged     |
 
-- `Unit *.* Unit` => `Unit`            — for stateless+stateless fanout
-- `Unit *.* B`    => `B`                — stateless+stateful collapses
-- `A *.* Unit`    => `A`
-- otherwise       => `Tuples`-flattened tuple (`(A, B, C, D, …)` flat)
+`Combine` is a priority ladder over `combinators.Tuples` that
+disambiguates `Tuples[Unit, Unit]` (both `leftUnit` and `rightUnit` from
+upstream `Tuples` would otherwise match) and otherwise inherits its
+Scala 3 auto-flattening. On Scala 3 the same reductions are also exposed
+as the **match type** `Combine.Merge[A, B]`, mirroring the
+`combinators.Tuples.Combined` / `combinators.Eithers.CanonicalizeEither`
+pattern elsewhere in the codebase:
+
+- `Merge[Unit, Unit]` => `Unit`            — stateless+stateless fanout
+- `Merge[Unit, B]`    => `B`               — stateless+stateful collapses
+- `Merge[A, Unit]`    => `A`
+- `Merge[A, B]`       => `Tuples.Combined[A, B]` (flat `(A, B, C, D, …)`)
+
+`Combine.merge[A, B]` is an `inline` summon that returns
+`Combine.Aux[A, B, Merge[A, B]]` directly via `summonInline` +
+`erasedValue` dispatch — useful when you want to guarantee compile-time
+inference without the priority-based implicit search.
 
 ## Resumption (`withInitialState`)
 
@@ -146,6 +167,37 @@ population variants). Forms a Monoid under `merge`.
 | `Scan.tumbling(size)`             | count-based tumbling windows                                              |
 | `Scan.tumblingTime(durationNs)`   | event-time tumbling windows over `Timestamped[A]`                         |
 | `Scan.sliding(size, step)`        | count-based sliding windows; final partial emitted                        |
+
+## TimeSeries (parity with `fs2.timeseries.TimeSeries`)
+
+A time series is a stream of `Timestamped[Option[A]]`: `Some` carries a
+value, `None` carries a **tick** that marks the passage of time without
+an observation. The `TimeSeries` object provides Scan-flavoured
+combinators that translate cleanly from `fs2.timeseries.TimeSeries`:
+
+| Combinator                             | Behaviour                                                                            |
+|----------------------------------------|--------------------------------------------------------------------------------------|
+| `TimeSeries.preserve(scan)`            | Lift `Scan[I, O]` to operate on `Value[I]` / `Value[O]`; ticks pass through          |
+| `TimeSeries.preserveTicks(scan)`       | Same, for a scan that already cares about timestamps                                 |
+| `TimeSeries.choice(l, r)`              | Combine two scans over `Value[L]` / `Value[R]`; ticks broadcast to both, by-tag routing |
+
+```scala
+import zio.blocks.streams.scan._
+
+val running: Scan.Aux[Double, Double, Double] =
+  Scan.runningFold[Double, Double](0.0)(_ + _)
+
+val lifted: Scan.Aux[
+  TimeSeries.Value[Double],
+  TimeSeries.Value[Double],
+  Double
+] = TimeSeries.preserve(running)
+```
+
+The asynchronous tick-interleaving primitives from `fs2` (`interpolateTicks`,
+`throttle`, `reorderLocally`) require an effect type and belong on the
+`Stream` surface — out of scope here. The `Scan`-only adapters above
+cover the synchronous parity subset.
 
 ## MACD over 10-minute returns
 
