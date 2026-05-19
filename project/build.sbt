@@ -27,7 +27,7 @@ lazy val root = (project in file("."))
     },
     libraryDependencies ++= Seq(
       "org.scalameta" %% "scalameta"        % "4.16.1",
-      "org.scalameta" %% "scalafmt-dynamic" % "3.10.4",
+      "org.scalameta" %% "scalafmt-dynamic" % "3.10.7",
       "com.lihaoyi"   %% "ujson"            % "3.1.0"
     )
   )
