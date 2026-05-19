@@ -5,13 +5,13 @@ import java.util.concurrent.{CountDownLatch, Thread}
 
 object BatchExample extends App {
   val buffer = SpscRingBuffer[java.lang.Integer](64)
-  val latch = new CountDownLatch(1)
+  val latch  = new CountDownLatch(1)
 
   val producer = new Thread(() => {
     var batch = 1
     while (batch <= 3) {
       val currentBatch = batch
-      val count = buffer.fill(() => java.lang.Integer.valueOf(currentBatch * 100), 10)
+      val count        = buffer.fill(() => java.lang.Integer.valueOf(currentBatch * 100), 10)
       println(s"Filled $count items in batch $currentBatch")
       batch += 1
     }
