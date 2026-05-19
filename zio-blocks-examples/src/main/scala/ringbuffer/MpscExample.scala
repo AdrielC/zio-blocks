@@ -5,7 +5,7 @@ import java.util.concurrent.{CountDownLatch, Thread}
 
 object MpscExample extends App {
   val buffer = MpscRingBuffer[java.lang.Integer](16)
-  val latch = new CountDownLatch(1)
+  val latch  = new CountDownLatch(1)
 
   val producers = (0 until 3).map { id =>
     new Thread(() => {

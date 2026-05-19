@@ -5,7 +5,7 @@ import java.util.concurrent.{CountDownLatch, Thread}
 
 object SpscExample extends App {
   val buffer = SpscRingBuffer[String](8)
-  val latch = new CountDownLatch(1)
+  val latch  = new CountDownLatch(1)
 
   val producer = new Thread(() => {
     for (i <- 1 to 5) {

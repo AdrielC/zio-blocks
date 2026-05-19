@@ -5,9 +5,9 @@ import java.util.concurrent.{CountDownLatch, Thread}
 import java.util.concurrent.atomic.AtomicInteger
 
 object MpmcExample extends App {
-  val buffer = MpmcRingBuffer[String](32)
+  val buffer    = MpmcRingBuffer[String](32)
   val processed = new AtomicInteger(0)
-  val latch = new CountDownLatch(2)
+  val latch     = new CountDownLatch(2)
 
   val producers = (0 until 2).map { id =>
     new Thread(() => {
