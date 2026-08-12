@@ -57,7 +57,7 @@ The relationship between typed and dynamic optics:
 └──────────────────┘             └──────────────────┘
 ```
 
-The `Optic[S, A]` and `DynamicOptic` types serve complementary roles in ZIO Blocks' optics system. `Optic[S, A]` provides compile-time type safety through macros or manual construction, operates on typed Scala values, and can be converted to a `DynamicOptic` via the `optic.toDynamic` method. In contrast, `DynamicOptic` performs runtime type checking and is constructed through a builder API or [path interpolator](../../path-interpolator.md), operating directly on [DynamicValue](./dynamic-value.md), [Schema](./schema.md), and [Reflect](./reflect.md) representations. 
+The `Optic[S, A]` and `DynamicOptic` types serve complementary roles in ZIO Blocks' optics system. `Optic[S, A]` provides compile-time type safety through macros or manual construction, operates on typed Scala values, and can be converted to a `DynamicOptic` via the `optic.toDynamic` method. In contrast, `DynamicOptic` performs runtime type checking and is constructed through a builder API or [path interpolator](./path-interpolator.md), operating directly on [DynamicValue](./dynamic-value.md), [Schema](./schema.md), and [Reflect](./reflect.md) representations. 
 
 ## Design & Structure
 
@@ -157,7 +157,7 @@ Note: `.atKey` and `.atKeys` require an implicit `Schema[K]` to convert the type
 
 ### Path Interpolator
 
-The [`p"..."` path interpolator](../../path-interpolator.md) provides a concise compile-time syntax for building
+The [`p"..."` path interpolator](./path-interpolator.md) provides a concise compile-time syntax for building
 `DynamicOptic` values:
 
 ```scala mdoc:compile-only
@@ -181,7 +181,7 @@ val success = p".result<Success>.value"
 val complex = p""".groups[*].members[0].contacts{"email"}"""
 ```
 
-See [Path Interpolator](../../path-interpolator.md) for the full syntax reference.
+See [Path Interpolator](./path-interpolator.md) for the full syntax reference.
 
 ### From Typed Optics
 
@@ -360,7 +360,7 @@ expected Email, but got Push
 
 `DynamicOptic` provides two string formats for different contexts:
 
-- **`toString`** — Compact path syntax matching the [`p"..."` interpolator](../../path-interpolator.md) format
+- **`toString`** — Compact path syntax matching the [`p"..."` interpolator](./path-interpolator.md) format
 - **`toScalaString`** — Scala method call syntax used in error messages
 
 | Node                      | `toString`   | `toScalaString`     |
@@ -396,6 +396,152 @@ val serialized: DynamicValue = opticSchema.toDynamicValue(path)
 ```
 
 
+## Search Optics
+
+A **Search optic** recursively traverses a data structure to find **all occurrences** matching a type or schema. It produces a `Traversal[S, A]` that collects matches in depth-first, left-to-right order.
+
+### Motivation
+
+Search optics address scenarios where you need to:
+
+- **Find all values of a specific type** across deeply nested structures (e.g., all `String` fields in a nested record)
+- **Extract all data matching a structural pattern** (e.g., all records with `{ name: string, age: int }` schema)
+- **Transform all matching occurrences** in untyped or partially-typed data
+- **Query data without knowing the exact path** — the search discovers all paths automatically
+
+### Typed API: `.searchFor[T]`
+
+Use the `.searchFor[T]` extension method on a `CompanionOptics` to search for all values of type `T`:
+
+```scala mdoc:compile-only
+import zio.blocks.schema._
+
+case class Person(name: String, age: Int)
+object Person {
+  implicit val schema: Schema[Person] = Schema.derived
+}
+
+case class Address(city: String)
+object Address {
+  implicit val schema: Schema[Address] = Schema.derived
+}
+
+case class Company(name: String, employees: List[Person], hq: Address)
+object Company extends CompanionOptics[Company] {
+  implicit val schema: Schema[Company] = Schema.derived
+}
+
+// Find all Person instances within a Company
+val personSearch: Traversal[Company, Person] = Company.optic(_.searchFor[Person])
+
+val company = Company(
+  "Acme",
+  List(Person("Alice", 30), Person("Bob", 25)),
+  Address("NYC")
+)
+
+// Modify all persons (increment their age)
+val updated: Company = personSearch.modify(company, p => p.copy(age = p.age + 1))
+// Company("Acme", List(Person("Alice", 31), Person("Bob", 26)), Address("NYC"))
+```
+
+### Dynamic API: Path Strings with `#` Prefix
+
+Use the `#` prefix in path strings to specify type or schema patterns:
+
+```scala mdoc:compile-only
+import zio.blocks.schema._
+
+val data = DynamicValue.Record(
+  "company" -> DynamicValue.Record(
+    "name" -> DynamicValue.string("Acme"),
+    "employees" -> DynamicValue.Sequence(
+      DynamicValue.Record("name" -> DynamicValue.string("Alice")),
+      DynamicValue.Record("name" -> DynamicValue.string("Bob"))
+    )
+  )
+)
+
+// Find all strings in the data
+val allStrings = data.get(p"#string").toChunk
+// Chunk(
+//   DynamicValue.string("Acme"),
+//   DynamicValue.string("Alice"),
+//   DynamicValue.string("Bob")
+// )
+
+// Find all records matching a schema
+val recordsWithName = data.get(p"#record { name: string }").toChunk
+
+// Modify all matching values
+val modified = data.modify(p"#string")(dv =>
+  dv match {
+    case DynamicValue.Primitive(PrimitiveValue.String(s)) =>
+      DynamicValue.string(s.toUpperCase)
+    case other => other
+  }
+)
+```
+
+### Supported Patterns
+
+Search optics support both **type-based** and **schema-based** patterns:
+
+| Pattern                        | Matches                                | Example                    |
+|--------------------------------|----------------------------------------|---------------------------|
+| `#Nominal` (type name)         | Values of that type name               | `#Person`                  |
+| `#int`, `#string`, `#boolean`  | Specific primitive types (case-insensitive) | `#int`, `#string`, `#boolean` |
+| `#record { ... }`              | Records with matching fields           | `#record { name: string }` |
+| `#variant { ... }`             | Variant cases with matching content    | `#variant { Error: string }` |
+| `#list(...)`                   | Lists/sequences with element type     | `#list(string)`            |
+| `#map(...)`                    | Maps with key and value types          | `#map(string, int)`        |
+| `#option(...)`                 | Optional values with inner type       | `#option(int)`             |
+
+### Traversal Order
+
+Results are collected in **depth-first, left-to-right order**:
+
+```scala mdoc:compile-only
+import zio.blocks.schema._
+
+val nested = DynamicValue.Record(
+  "a" -> DynamicValue.int(1),
+  "b" -> DynamicValue.Record(
+    "c" -> DynamicValue.int(2),
+    "d" -> DynamicValue.int(3)
+  ),
+  "e" -> DynamicValue.int(4)
+)
+
+// Depth-first, left-to-right: 1, 2, 3, 4
+val allInts = nested.get(p"#int").toChunk
+// Chunk(1, 2, 3, 4)
+```
+
+### Known Limitation: Nominal Matching in Untyped Contexts
+
+`Nominal` pattern matching (e.g., `#Person`) returns `false` when applied to `DynamicValue` or `Json` because these untyped structures carry no type identity. To match nominally-typed data, use one of these approaches:
+
+- **Use the typed API**: `optic(_.searchFor[Person])`
+- **Or use structural patterns**: `p"#record { name: string, age: int }"`
+
+Here's how the two approaches differ in practice:
+
+```scala mdoc:compile-only
+import zio.blocks.schema._
+
+val dynamicData: DynamicValue = ???
+
+// This won't match — no type identity available
+val nominalMatch = dynamicData.get(p"#Person").toChunk
+// Chunk()
+
+// This works — structural matching
+val structuralMatch = dynamicData.get(p"#record { name: string, age: int }").toChunk
+// Chunk(...matching records...)
+```
+
 ## See Also
 
 - [DynamicSchema](./dynamic-schema.md) — use `DynamicSchema#get` with a `DynamicOptic` to navigate schema trees and inspect nested type structures.
+- [Optics](./optics.md) — reference page for typed `Optic[S, A]` and reflective optics concepts.

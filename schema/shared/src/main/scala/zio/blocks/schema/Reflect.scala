@@ -388,7 +388,7 @@ object Reflect {
       storedExamples.flatMap(dv => fromDynamicValue(dv).toOption)
 
     def examples(value: A, values: A*)(implicit F: HasBinding[F]): Record[F, A] =
-      copy(storedExamples = (value +: values).map(toDynamicValue))
+      copy(storedExamples = values.prepended(value).map(toDynamicValue))
 
     def binding(implicit F: HasBinding[F]): Binding[BindingType.Record, A] = F.binding(recordBinding)
 
@@ -453,7 +453,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, A] = recordBinding
 
-    def modifier(modifier: Modifier.Reflect): Record[F, A] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Record[F, A] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Record[F, A] = copy(modifiers = this.modifiers ++ modifiers)
 
@@ -606,7 +606,7 @@ object Reflect {
       storedExamples.flatMap(dv => fromDynamicValue(dv).toOption)
 
     def examples(value: A, values: A*)(implicit F: HasBinding[F]): Variant[F, A] =
-      copy(storedExamples = (value +: values).map(toDynamicValue))
+      copy(storedExamples = values.prepended(value).map(toDynamicValue))
 
     def binding(implicit F: HasBinding[F]): Binding[BindingType.Variant, A] = F.binding(variantBinding)
 
@@ -639,7 +639,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, A] = variantBinding
 
-    def modifier(modifier: Modifier.Reflect): Variant[F, A] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Variant[F, A] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Variant[F, A] = copy(modifiers = this.modifiers ++ modifiers)
 
@@ -716,7 +716,7 @@ object Reflect {
       storedExamples.flatMap(dv => fromDynamicValue(dv).toOption)
 
     def examples(value: C[A], values: C[A]*)(implicit F: HasBinding[F]): Sequence[F, A, C] =
-      copy(storedExamples = (value +: values).map(toDynamicValue))
+      copy(storedExamples = values.prepended(value).map(toDynamicValue))
 
     private[schema] def fromDynamicValue(value: DynamicValue, trace: List[DynamicOptic.Node])(implicit
       F: HasBinding[F]
@@ -747,7 +747,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, C[A]] = seqBinding
 
-    def modifier(modifier: Modifier.Reflect): Sequence[F, A, C] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Sequence[F, A, C] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Sequence[F, A, C] =
       copy(modifiers = this.modifiers ++ modifiers)
@@ -835,7 +835,7 @@ object Reflect {
       storedExamples.flatMap(dv => fromDynamicValue(dv).toOption)
 
     def examples(value: M[K, V], values: M[K, V]*)(implicit F: HasBinding[F]): Map[F, K, V, M] =
-      copy(storedExamples = (value +: values).map(toDynamicValue))
+      copy(storedExamples = values.prepended(value).map(toDynamicValue))
 
     private[schema] def fromDynamicValue(value: DynamicValue, trace: List[DynamicOptic.Node])(implicit
       F: HasBinding[F]
@@ -872,7 +872,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, M[K, V]] = mapBinding
 
-    def modifier(modifier: Modifier.Reflect): Map[F, K, V, M] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Map[F, K, V, M] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Map[F, K, V, M] =
       copy(modifiers = this.modifiers ++ modifiers)
@@ -953,7 +953,7 @@ object Reflect {
     def examples(implicit F: HasBinding[F]): Seq[DynamicValue] = storedExamples
 
     def examples(value: DynamicValue, values: DynamicValue*)(implicit F: HasBinding[F]): Dynamic[F] =
-      copy(storedExamples = value +: values)
+      copy(storedExamples = values.prepended(value))
 
     private[schema] def fromDynamicValue(value: DynamicValue, trace: List[DynamicOptic.Node])(implicit
       F: HasBinding[F]
@@ -961,7 +961,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, DynamicValue] = dynamicBinding
 
-    def modifier(modifier: Modifier.Reflect): Dynamic[F] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Dynamic[F] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Dynamic[F] = copy(modifiers = this.modifiers ++ modifiers)
 
@@ -1015,7 +1015,7 @@ object Reflect {
       storedExamples.flatMap(dv => primitiveType.fromDynamicValue(dv, Nil).toOption)
 
     def examples(value: A, values: A*)(implicit F: HasBinding[F]): Primitive[F, A] =
-      copy(storedExamples = (value +: values).map(primitiveType.toDynamicValue))
+      copy(storedExamples = values.prepended(value).map(primitiveType.toDynamicValue))
 
     private[schema] def fromDynamicValue(value: DynamicValue, trace: List[DynamicOptic.Node])(implicit
       F: HasBinding[F]
@@ -1023,7 +1023,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, A] = primitiveBinding
 
-    def modifier(modifier: Modifier.Reflect): Primitive[F, A] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Primitive[F, A] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Primitive[F, A] =
       copy(modifiers = this.modifiers ++ modifiers)
@@ -1090,7 +1090,7 @@ object Reflect {
       storedExamples.flatMap(dv => fromDynamicValue(dv).toOption)
 
     def examples(value: A, values: A*)(implicit F: HasBinding[F]): Wrapper[F, A, B] =
-      copy(storedExamples = (value +: values).map(toDynamicValue))
+      copy(storedExamples = values.prepended(value).map(toDynamicValue))
 
     private[schema] def fromDynamicValue(value: DynamicValue, trace: List[DynamicOptic.Node])(implicit
       F: HasBinding[F]
@@ -1107,7 +1107,7 @@ object Reflect {
 
     def metadata: F[NodeBinding, A] = wrapperBinding
 
-    def modifier(modifier: Modifier.Reflect): Wrapper[F, A, B] = copy(modifiers = modifiers :+ modifier)
+    def modifier(modifier: Modifier.Reflect): Wrapper[F, A, B] = copy(modifiers = modifiers.appended(modifier))
 
     def modifiers(modifiers: Iterable[Modifier.Reflect]): Wrapper[F, A, B] =
       copy(modifiers = this.modifiers ++ modifiers)
@@ -1181,7 +1181,7 @@ object Reflect {
       else value.examples
 
     def examples(value: A, values: A*)(implicit F: HasBinding[F]): Deferred[F, A] =
-      copy(deferredExamples = ((() => value) +: values.map(v => () => v)))
+      copy(deferredExamples = values.map(v => () => v).prepended(() => value))
 
     private[schema] def fromDynamicValue(value: DynamicValue, trace: List[DynamicOptic.Node])(implicit
       F: HasBinding[F]
@@ -1420,7 +1420,7 @@ object Reflect {
 
     override def toString: String = {
       val v = visited.get
-      if (v.containsKey(this)) s"deferred => ${typeId}"
+      if (v.containsKey(this)) s"deferred => $typeId"
       else {
         v.put(this, ())
         try value.toString
@@ -1726,6 +1726,69 @@ object Reflect {
       F.fromBinding(Binding.Variant.option)
     )
 
+  private[this] def left[F[_, _], A, B](
+    left: Reflect[F, A],
+    right: Reflect[F, B]
+  )(implicit F: FromBinding[F]): Record[F, Left[A, B]] = {
+    val typeId = TypeId.applied[Left[A, B]](
+      TypeId.nominal[Left[?, ?]](
+        "Left",
+        Owner.fromPackagePath("scala.util"),
+        List(TypeParam.covariant("A", 0), TypeParam.covariant("B", 1))
+      ),
+      TypeRepr.Ref(left.typeId),
+      TypeRepr.Ref(right.typeId)
+    )
+    val register = Record.registers(Array[Reflect[F, ?]](left)).head.asInstanceOf[Register[A]]
+    new Record(Chunk.single(new Term("value", left)), typeId, F.fromBinding(Binding.Record.left(register)))
+  }
+
+  private[this] def right[F[_, _], A, B](
+    left: Reflect[F, A],
+    right: Reflect[F, B]
+  )(implicit F: FromBinding[F]): Record[F, Right[A, B]] = {
+    val typeId = TypeId.applied[Right[A, B]](
+      TypeId.nominal[Right[?, ?]](
+        "Right",
+        Owner.fromPackagePath("scala.util"),
+        List(TypeParam.covariant("A", 0), TypeParam.covariant("B", 1))
+      ),
+      TypeRepr.Ref(left.typeId),
+      TypeRepr.Ref(right.typeId)
+    )
+    val register = Record.registers(Array[Reflect[F, ?]](right)).head.asInstanceOf[Register[B]]
+    new Record(Chunk.single(new Term("value", right)), typeId, F.fromBinding(Binding.Record.right(register)))
+  }
+
+  /**
+   * Creates an `Either[A, B]` variant using the layouts described by the two
+   * child reflects.
+   *
+   * @param left
+   *   the reflect for left values
+   * @param right
+   *   the reflect for right values
+   * @param F
+   *   the conversion from runtime bindings to metadata
+   * @tparam F
+   *   the metadata type constructor
+   * @tparam A
+   *   the left value type
+   * @tparam B
+   *   the right value type
+   * @return
+   *   a variant reflect whose cases are ordered as `Left`, then `Right`
+   */
+  def either[F[_, _], A, B](
+    left: Reflect[F, A],
+    right: Reflect[F, B]
+  )(implicit F: FromBinding[F]): Variant[F, Either[A, B]] =
+    new Variant(
+      Chunk(new Term("Left", this.left(left, right)), new Term("Right", this.right(left, right))),
+      TypeId.applied[Either[A, B]](TypeId.either, TypeRepr.Ref(left.typeId), TypeRepr.Ref(right.typeId)),
+      F.fromBinding(Binding.Variant.either)
+    )
+
   private[this] val maybeTypeId: TypeId[Any] =
     TypeId
       .nominal[Any]("Maybe", Owner.fromPackagePath("zio.blocks.maybe"), List(TypeParam("A", 0, Variance.Covariant)))
@@ -1977,10 +2040,18 @@ object Reflect {
 
   private[schema] def unwrapToPrimitiveTypeOption[F[_, _], A](reflect: Reflect[F, A]): Option[PrimitiveType[A]] =
     if (reflect.isWrapper) {
-      reflect.asWrapperUnknown.get.wrapper.underlyingPrimitiveType.asInstanceOf[Option[PrimitiveType[A]]]
+      val wrapper = reflect.asWrapperUnknown.get.wrapper
+      wrapper.underlyingPrimitiveType.orElse {
+        // An opaque wrapper has the same runtime representation as its wrapped
+        // schema. Its TypeId can lack that representation when the schema was
+        // built with `transform`, so fall back to the wrapped primitive type.
+        if (wrapper.typeId.isOpaque)
+          unwrapToPrimitiveTypeOption(wrapper.wrapped).asInstanceOf[Option[PrimitiveType[A]]]
+        else None
+      }.asInstanceOf[Option[PrimitiveType[A]]]
     } else reflect.asPrimitive.map(_.primitiveType)
 
-  private[schema] def registerOffset[F[_, _], A](reflect: Reflect[F, A]): RegisterOffset.RegisterOffset =
+  private[blocks] def registerOffset[F[_, _], A](reflect: Reflect[F, A]): RegisterOffset.RegisterOffset =
     unwrapToPrimitiveTypeOption(reflect) match {
       case Some(primitiveType) =>
         primitiveType match {
@@ -1998,7 +2069,7 @@ object Reflect {
       case _ => RegisterOffset.incrementObjects(0L)
     }
 
-  private[schema] def typeTag[F[_, _], A](reflect: Reflect[F, A]): Int =
+  private[blocks] def typeTag[F[_, _], A](reflect: Reflect[F, A]): Int =
     unwrapToPrimitiveTypeOption(reflect) match {
       case Some(primitiveType) =>
         primitiveType match {

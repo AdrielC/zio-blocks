@@ -8,7 +8,7 @@ const sidebars = {
       items: [
          {
            type: "category",
-           label: "ZIO Blocks Schema",
+           label: "Schema",
            link: { type: "doc", id: "reference/schema/index" },
            items: [
              {
@@ -41,6 +41,7 @@ const sidebars = {
                items: [
                  "reference/schema/optics",
                  "reference/schema/dynamic-optic",
+                 "reference/schema/path-interpolator",
                  "reference/schema/schema-expr",
                  "reference/schema/patch",
                ]
@@ -52,28 +53,38 @@ const sidebars = {
                items: [
                  "reference/schema/type-class-derivation",
                  "reference/schema/codec",
+                 "reference/schema/format",
+                 "reference/schema/lazy",
+               ]
+             },
+             {
+               type: "category",
+               label: "Built-in Formats and Codecs",
+               link: { type: "doc", id: "reference/schema/built-in-codecs/index" },
+               collapsed: false,
+               items: [
                  {
                    type: "category",
-                   label: "Formats",
-                   link: { type: "doc", id: "reference/schema/formats" },
+                   label: "JSON Codec",
+                   link: { type: "doc", id: "reference/schema/built-in-codecs/json/index" },
                    collapsed: false,
                    items: [
-                     {
-                       type: "category",
-                       label: "Json Format",
-                       link: { type: "doc", id: "reference/schema/formats" },
-                       collapsed: false,
-                       items: [
-                         "reference/schema/json",
-                         "reference/schema/json-patch",
-                         "reference/schema/json-differ",
-                         "reference/schema/json-schema",
-                       ]
-                     },
-                     "reference/schema/xml",
+                     "reference/schema/built-in-codecs/json/json",
+                     "reference/schema/built-in-codecs/json/json-config",
+                     "reference/schema/built-in-codecs/json/json-patch",
+                     "reference/schema/built-in-codecs/json/json-differ",
+                     "reference/schema/built-in-codecs/json/json-selection",
+                     "reference/schema/built-in-codecs/json/json-schema",
                    ]
                  },
-                 "reference/schema/lazy",
+                 "reference/schema/built-in-codecs/avro",
+                 "reference/schema/built-in-codecs/bson",
+                 "reference/schema/built-in-codecs/csv",
+                 "reference/schema/built-in-codecs/messagepack",
+                 "reference/schema/built-in-codecs/thrift",
+                 "reference/schema/built-in-codecs/toon",
+                 "reference/schema/built-in-codecs/xml",
+                 "reference/schema/built-in-codecs/yaml",
                ]
              },
              {
@@ -86,15 +97,16 @@ const sidebars = {
                  "reference/schema/allows",
                ]
              },
-             {
-               type: "category",
-               label: "Schema Evolution",
-               link: { type: "doc", id: "reference/schema/schema-evolution/index" },
-               items: [
-                 "reference/schema/schema-evolution/into",
-                 "reference/schema/schema-evolution/as",
-               ]
-             },
+              {
+                type: "category",
+                label: "Schema Evolution",
+                link: { type: "doc", id: "reference/schema/schema-evolution/index" },
+                items: [
+                  "reference/schema/schema-evolution/into",
+                  "reference/schema/schema-evolution/as",
+                  "reference/schema/migration",
+                ]
+              },
              "reference/schema/syntax",
            ]
          },
@@ -113,10 +125,11 @@ const sidebars = {
              "reference/resource-management/finalizer",
              "reference/resource-management/finalization",
            ]
-         },
-         "reference/combinators",
-         "reference/docs",
-         "reference/media-type",
+          },
+          "reference/combinators",
+          "reference/docs",
+          "reference/config",
+          "reference/media-type",
          {
            type: "category",
            label: "Code Generation",
@@ -159,7 +172,7 @@ const sidebars = {
           "reference/chunk",
           "reference/maybe",
           "reference/mux",
-          "path-interpolator",
+          "reference/async",
           {
             type: "category",
             label: "RingBuffer",
@@ -192,29 +205,140 @@ const sidebars = {
           },
           {
             type: "category",
-            label: "ZIO Blocks Streams",
+            label: "Streams",
             link: { type: "doc", id: "reference/streams/index" },
             items: [
-             "reference/streams/stream",
-             "reference/streams/pipeline",
-             "reference/streams/sink",
-             "reference/streams/reader",
-             "reference/streams/writer",
-             "reference/streams/zero-boxing",
-           ]
-         },
-      ]
-    },
+              "reference/streams/stream",
+              "reference/streams/pipeline",
+              "reference/streams/sink",
+              "reference/streams/reader",
+              "reference/streams/writer",
+              "reference/streams/concurrent-operators",
+              "reference/streams/zero-boxing",
+            ]
+          },
+          {
+            type: "category",
+            label: "SQL",
+            link: { type: "doc", id: "reference/sql/index" },
+            items: [
+              {
+                type: "category",
+                label: "Core Types",
+                collapsed: false,
+                items: [
+                  "reference/sql/db-codec",
+                  "reference/sql/frag",
+                  "reference/sql/table",
+                  "reference/sql/repo",
+                  "reference/sql/transactor",
+                  "reference/sql/db-con",
+                  "reference/sql/db-tx",
+                ],
+              },
+              {
+                type: "category",
+                label: "Supporting Types",
+                collapsed: false,
+                items: [
+                  "reference/sql/db-value",
+                  "reference/sql/db-param",
+                  "reference/sql/sql-dialect",
+                  "reference/sql/sql-logger",
+                  "reference/sql/sql-name-mapper",
+                  "reference/sql/table-metadata",
+                  "reference/sql/ddl",
+                  "reference/sql/db-connection",
+                  "reference/sql/db-result-reader",
+                  "reference/sql/db-param-writer",
+                  "reference/sql/db-codec-deriver",
+                  "reference/sql/transactor-zio",
+                ],
+              },
+            ],
+          },
+          "reference/sql-zio",
+          {
+            type: "category",
+            label: "Telemetry",
+            link: { type: "doc", id: "reference/telemetry/index" },
+            items: [
+              {
+                type: "category",
+                label: "Tracing",
+                link: { type: "doc", id: "reference/telemetry/tracing/index" },
+                collapsed: false,
+                items: [
+                  "reference/telemetry/tracing/tracer-provider",
+                  "reference/telemetry/tracing/tracer",
+                  "reference/telemetry/tracing/span",
+                  "reference/telemetry/tracing/span-context",
+                  "reference/telemetry/tracing/span-data",
+                  "reference/telemetry/tracing/span-builder",
+                  "reference/telemetry/tracing/span-processor",
+                  "reference/telemetry/tracing/sampler",
+                  "reference/telemetry/tracing/span-kind",
+                  "reference/telemetry/tracing/span-status",
+                ]
+              },
+              {
+                type: "category",
+                label: "Logging",
+                link: { type: "doc", id: "reference/telemetry/logging/index" },
+                collapsed: false,
+                items: [
+                  "reference/telemetry/logging/logger-provider",
+                  "reference/telemetry/logging/logger",
+                  "reference/telemetry/logging/log-record",
+                  "reference/telemetry/logging/log-record-processor",
+                  "reference/telemetry/logging/log-formatter",
+                  "reference/telemetry/logging/log-writer",
+                  "reference/telemetry/logging/severity",
+                  "reference/telemetry/logging/log-enrichment",
+                ]
+              },
+              {
+                type: "category",
+                label: "Metrics",
+                link: { type: "doc", id: "reference/telemetry/metrics/index" },
+                collapsed: false,
+                items: [
+                  "reference/telemetry/metrics/meter-provider",
+                  "reference/telemetry/metrics/meter",
+                  "reference/telemetry/metrics/instruments",
+                  "reference/telemetry/metrics/labeled-instruments",
+                  "reference/telemetry/metrics/metric-data",
+                ]
+              },
+              {
+                type: "category",
+                label: "Common Types",
+                link: { type: "doc", id: "reference/telemetry/common/index" },
+                collapsed: false,
+                items: [
+                  "reference/telemetry/common/attributes",
+                  "reference/telemetry/common/attribute-key",
+                  "reference/telemetry/common/resource",
+                  "reference/telemetry/common/instrumentation-scope",
+                ]
+              },
+              "reference/telemetry/otel/index",
+            ]
+          },
+        ]
+      },
     {
       type: "category",
       label: "Guides",
       items: [
         "guides/compile-time-resource-safety-with-scope",
-        "guides/zio-schema-migration",
-        "guides/query-dsl-reified-optics",
-        "guides/query-dsl-sql",
+        "guides/getting-started-with-mux",
         "guides/query-dsl-extending",
         "guides/query-dsl-fluent-builder",
+        "guides/query-dsl-reified-optics",
+        "guides/query-dsl-sql",
+        "guides/zio-schema-migration",
+        "guides/telemetry-guide",
       ]
     }
   ]
