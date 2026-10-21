@@ -1279,7 +1279,7 @@ lazy val benchmarks = project
   .enablePlugins(JmhPlugin)
   .settings(
     libraryDependencies ++= Seq(
-      "com.vitthalmirji"                      %% "toon4s-core"           % "0.9.1",
+      "com.vitthalmirji"                      %% "toon4s-core"           % "0.9.3",
       "com.github.plokhotnyuk.jsoniter-scala" %% "jsoniter-scala-macros" % "2.40.1",
       "com.sksamuel.avro4s"                   %% "avro4s-core"           % "5.0.15",
       "dev.zio"                               %% "zio-json"              % "0.9.2",
