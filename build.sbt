@@ -1612,7 +1612,7 @@ lazy val `schema-examples` = project
     coverageMinimumStmtTotal   := 0,
     coverageMinimumBranchTotal := 0,
     libraryDependencies ++= Seq(
-      "com.lihaoyi" %% "sourcecode"     % "0.4.4",
+      "com.lihaoyi" %% "sourcecode"     % "0.4.6",
       "dev.zio"     %% "zio-sbt-source" % "0.6.3"
     ),
     scalacOptions -= "-Werror",
@@ -1640,7 +1640,7 @@ lazy val `streams-examples` = project
     coverageMinimumStmtTotal   := 0,
     coverageMinimumBranchTotal := 0,
     libraryDependencies ++= Seq(
-      "com.lihaoyi" %% "sourcecode"     % "0.4.4",
+      "com.lihaoyi" %% "sourcecode"     % "0.4.6",
       "dev.zio"     %% "zio-sbt-source" % "0.6.3"
     ),
     scalacOptions -= "-Werror",
